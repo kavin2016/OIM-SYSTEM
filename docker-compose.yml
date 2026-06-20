@@ -1,0 +1,74 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: oim-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-oim_root_password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-OMIS}
+      MYSQL_USER: ${MYSQL_USER:-oim}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-oim_password}
+      TZ: ${TZ:-Asia/Hong_Kong}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+08:00
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - oim
+
+  backend:
+    build:
+      context: ./backend
+    container_name: oim-backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/docker.env
+    environment:
+      MYSQL_USER: ${MYSQL_USER:-oim}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-oim_password}
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_DB: ${MYSQL_DATABASE:-OMIS}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ping', timeout=5).read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - oim
+
+  web:
+    build:
+      context: ./Web
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+    container_name: oim-web
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-80}:80"
+    networks:
+      - oim
+
+volumes:
+  mysql_data:
+
+networks:
+  oim:
+    driver: bridge
