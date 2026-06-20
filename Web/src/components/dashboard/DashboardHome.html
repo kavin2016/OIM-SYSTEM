@@ -1,0 +1,30 @@
+<section class="dashboard-home">
+  <h2>仪表盘首页</h2>
+  <p>欢迎使用 OIM 系统后台管理仪表盘。</p>
+  <div class="dashboard-summary">
+    <p>在这里，您可以查看个人信息、管理用户、以及访问系统功能。</p>
+  </div>
+
+  <div class="stats-container">
+    <div class="stat-card">
+      <div class="stat-label">当前用户</div>
+      <div class="stat-value">{{ user?.username || '未知用户' }}</div>
+      <div class="stat-meta">{{ user?.email || '暂无邮箱' }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">用户ID</div>
+      <div class="stat-value">{{ user?.id || '-' }}</div>
+      <div class="stat-meta">系统标识</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">账户状态</div>
+      <div class="stat-value">{{ user?.is_active ? '激活' : '停用' }}</div>
+      <div class="stat-meta">{{ user?.is_admin ? '管理员' : '普通用户' }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">创建时间</div>
+      <div class="stat-value">{{ formatDate(user?.created_at) }}</div>
+      <div class="stat-meta">注册日期</div>
+    </div>
+  </div>
+</section>

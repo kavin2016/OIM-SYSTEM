@@ -1,0 +1,187 @@
+<section class="admin-panel">
+  <div v-if="isPageLoading" class="loading-layer">
+    <div class="loading-box">{{ loadingText }}</div>
+  </div>
+
+  <div v-if="!canAccessPage" class="admin-warning">当前用户没有部门管理权限，无法访问该模块。</div>
+
+  <div v-else>
+    <p v-if="message" class="info-message">{{ message }}</p>
+
+    <form class="query-panel" @submit.prevent="loadRows">
+      <div class="query-header">
+        <div>
+          <h3>查询条件</h3>
+          <span v-if="activeQueryCount > 0" class="query-count">已选 {{ activeQueryCount }} 项</span>
+        </div>
+      </div>
+
+      <div class="query-body">
+        <div class="query-grid">
+          <label>
+            <span>部门名称</span>
+            <input v-model="queryForm.name" type="text" placeholder="支持模糊查询" />
+          </label>
+          <label>
+            <span>部门编码</span>
+            <input v-model="queryForm.code" type="text" placeholder="支持模糊查询" />
+          </label>
+          <label>
+            <span>部门状态</span>
+            <select v-model="queryForm.status">
+              <option value="">全部</option>
+              <option value="active">正常</option>
+              <option value="inactive">禁用</option>
+            </select>
+          </label>
+          <label>
+            <span>删除状态</span>
+            <select v-model="queryForm.deletedStatus">
+              <option value="">全部</option>
+              <option value="active">未删除</option>
+              <option value="deleted">已删除</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div class="query-actions">
+        <button v-if="canOperate('query')" class="primary-button" type="submit" :disabled="loading">
+          <span class="button-icon">{{ actionIconMap.query }}</span>
+          <span>{{ loading ? '查询中...' : '查询' }}</span>
+        </button>
+        <button class="secondary-button" type="button" @click="resetQuery" :disabled="loading">
+          <span>↻</span>
+          <span>重置</span>
+        </button>
+      </div>
+    </form>
+
+    <div class="query-action-row">
+      <button v-if="canOperate('create')" class="primary-button" type="button" @click="startCreate">
+        <span class="button-icon">{{ actionIconMap.create }}</span>
+        <span>增加</span>
+      </button>
+    </div>
+
+    <div v-if="formVisible" class="layer-mask">
+      <section class="layer-panel layer-panel-small" role="dialog" aria-modal="true" :aria-label="isEditing ? '修改部门' : '增加部门'">
+        <header class="layer-header">
+          <h3>{{ isEditing ? '修改部门' : '增加部门' }}</h3>
+          <button class="text-button" type="button" @click="cancelForm">
+            <span class="button-icon">{{ actionIconMap.close }}</span>
+            <span>关闭</span>
+          </button>
+        </header>
+
+        <form class="layer-form" @submit.prevent="saveCurrent">
+          <div class="layer-form-grid layer-form-grid-single">
+            <label>
+              <span>部门名称</span>
+              <input v-model="form.name" type="text" required />
+            </label>
+            <label>
+              <span>部门编码</span>
+              <input v-model="form.code" type="text" required />
+            </label>
+            <label>
+              <span>上级部门</span>
+              <el-tree-select
+                v-model="form.parent_id"
+                class="query-control"
+                :data="parentDepartmentTreeOptions"
+                :props="{ label: 'label', children: 'children' }"
+                node-key="value"
+                placeholder="不选择则为顶级部门"
+                clearable
+                filterable
+                check-strictly
+                default-expand-all
+                popper-class="query-select-popper"
+                :render-after-expand="false"
+              />
+            </label>
+            <label>
+              <span>描述</span>
+              <textarea v-model="form.description" rows="4"></textarea>
+            </label>
+            <label>
+              <span>启用状态</span>
+              <select v-model="form.is_active">
+                <option :value="true">启用</option>
+                <option :value="false">禁用</option>
+              </select>
+            </label>
+            <label v-if="isEditing">
+              <span>删除状态</span>
+              <select v-model="form.is_deleted">
+                <option :value="false">未删除</option>
+                <option :value="true">已删除</option>
+              </select>
+            </label>
+          </div>
+          <footer class="layer-footer">
+            <button class="secondary-button" type="button" @click="cancelForm" :disabled="saving">取消</button>
+            <button type="submit" class="primary-button" :disabled="saving">
+              <span class="button-icon">{{ isEditing ? actionIconMap.update : actionIconMap.create }}</span>
+              <span>{{ saving ? '保存中...' : isEditing ? '保存修改' : '创建' }}</span>
+            </button>
+          </footer>
+        </form>
+      </section>
+    </div>
+
+    <section class="resource-list">
+      <div class="list-toolbar">
+        <h3>部门列表</h3>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>名称</th>
+              <th>编码</th>
+              <th>上级部门</th>
+              <th>描述</th>
+              <th>状态</th>
+              <th>删除</th>
+              <th>更新时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="loading"><td colspan="9" class="empty-cell">加载中...</td></tr>
+            <tr v-else-if="rows.length === 0"><td colspan="9" class="empty-cell">暂无数据</td></tr>
+            <tr v-for="item in departmentDisplayRows" v-else :key="item.id" :class="{ deleted: item.is_deleted }">
+              <td>{{ item.id }}</td>
+              <td>
+                <span class="tree-cell" :style="{ '--tree-depth': item.treeDepth }">
+                  <span class="tree-branch" aria-hidden="true">{{ item.treeDepth > 0 ? '└' : '' }}</span>
+                  <span>{{ item.name }}</span>
+                </span>
+              </td>
+              <td>{{ item.code }}</td>
+              <td>{{ parentDepartmentName(item.parent_id) }}</td>
+              <td>{{ item.description || '-' }}</td>
+              <td><span class="status-pill" :class="{ off: !item.is_active }">{{ item.is_active ? '正常' : '禁用' }}</span></td>
+              <td>{{ item.is_deleted ? '已删除' : '未删除' }}</td>
+              <td>{{ formatDate(item.updated_at) }}</td>
+              <td class="action-cell">
+                <button v-if="canOperate('update')" type="button" class="secondary-button" @click="editRow(item)">
+                  <span class="button-icon">{{ actionIconMap.update }}</span>
+                  <span>编辑</span>
+                </button>
+                <button v-if="canOperate('delete')" type="button" class="danger-button" @click="deleteRow(item)" :disabled="item.is_deleted">
+                  <span class="button-icon">{{ actionIconMap.delete }}</span>
+                  <span>删除</span>
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</section>

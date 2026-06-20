@@ -1,0 +1,554 @@
+<section class="admin-panel">
+  <div v-if="isPageLoading" class="loading-layer">
+    <div class="loading-box">{{ loadingText }}</div>
+  </div>
+
+  <div v-if="!canAccessPage" class="admin-warning">当前用户没有用户管理权限，无法访问该模块。</div>
+
+  <div v-else>
+    <p v-if="message" class="info-message">{{ message }}</p>
+    <div class="user-management-layout">
+      <aside class="organization-panel">
+        <div class="organization-header">
+          <div class="organization-title">
+            <span class="button-icon">▦</span>
+            <span>组织机构</span>
+          </div>
+          <div class="organization-tools">
+            <button type="button" class="icon-button" title="清空部门筛选" @click="clearDepartmentSelection">⌄</button>
+            <button type="button" class="icon-button" title="刷新组织机构" @click="refreshUserDepartmentTree">↻</button>
+          </div>
+        </div>
+        <div class="organization-search">
+          <span aria-hidden="true">⌕</span>
+          <input
+            v-model="departmentFilterText"
+            type="text"
+            placeholder="请输入部门名称"
+            @input="filterDepartmentTree"
+          />
+        </div>
+        <el-tree
+          ref="departmentOrgTreeRef"
+          class="organization-tree"
+          :data="departmentTreeOptions"
+          node-key="value"
+          default-expand-all
+          :props="{ label: 'label', children: 'children' }"
+          :filter-node-method="filterDepartmentNode"
+          :highlight-current="true"
+          @node-click="handleDepartmentNodeClick"
+        />
+      </aside>
+
+      <section class="user-management-main">
+        <form class="user-template-query" @submit.prevent="loadRows">
+          <label>
+            <span>用户名称</span>
+            <input v-model="queryForm.username" type="text" placeholder="请输入用户名称" />
+          </label>
+          <label>
+            <span>用户昵称</span>
+            <input v-model="queryForm.nickname" type="text" placeholder="请输入用户昵称" />
+          </label>
+          <label>
+            <span>部门</span>
+            <el-tree-select
+              v-model="queryForm.departmentId"
+              class="query-control user-template-control"
+              :data="departmentTreeOptions"
+              :props="{ label: 'label', children: 'children' }"
+              node-key="value"
+              placeholder="请选择部门"
+              clearable
+              filterable
+              check-strictly
+              default-expand-all
+              popper-class="query-select-popper"
+              :render-after-expand="false"
+            />
+          </label>
+          <label>
+            <span>角色</span>
+            <el-select
+              v-model="queryForm.roleId"
+              class="query-control user-template-control"
+              placeholder="请选择角色"
+              clearable
+              filterable
+              popper-class="query-select-popper"
+            >
+              <el-option
+                v-for="item in roleOptions"
+                :key="item.id"
+                :label="item.name"
+                :value="item.id"
+              />
+            </el-select>
+          </label>
+          <label>
+            <span>状态</span>
+            <select v-model="queryForm.status">
+              <option value="">用户状态</option>
+              <option value="active">正常</option>
+              <option value="inactive">禁用</option>
+            </select>
+          </label>
+          <label class="user-date-range">
+            <span>创建时间</span>
+            <div>
+              <input
+                v-model="queryForm.createdAtStart"
+                type="datetime-local"
+                step="1"
+                @click="openDateTimePicker"
+                @focus="openDateTimePicker"
+              />
+              <em>-</em>
+              <input
+                v-model="queryForm.createdAtEnd"
+                type="datetime-local"
+                step="1"
+                @click="openDateTimePicker"
+                @focus="openDateTimePicker"
+              />
+            </div>
+          </label>
+          <button v-if="canOperate('query')" class="primary-button" type="submit" :disabled="loading">
+            <span class="button-icon">{{ actionIconMap.query }}</span>
+            <span>{{ loading ? '查询中...' : '查询' }}</span>
+          </button>
+          <button class="secondary-button" type="button" @click="resetQuery" :disabled="loading">
+            <span>↻</span>
+            <span>重置</span>
+          </button>
+        </form>
+
+        <div class="user-template-toolbar">
+          <button v-if="canOperate('create')" class="primary-button" type="button" @click="startCreate">
+            <span class="button-icon">{{ actionIconMap.create }}</span>
+            <span>新增</span>
+          </button>
+          <button v-if="canOperate('update')" class="secondary-button success-soft-button" type="button" @click="editSelectedRow" :disabled="selectedRows.length !== 1">
+            <span class="button-icon">{{ actionIconMap.update }}</span>
+            <span>修改</span>
+          </button>
+          <button v-if="canOperate('delete')" class="danger-button danger-soft-button" type="button" @click="deleteSelectedRows" :disabled="selectedRows.length === 0 || saving">
+            <span class="button-icon">{{ actionIconMap.delete }}</span>
+            <span>删除</span>
+          </button>
+          <button v-if="canOperate('import')" class="secondary-button" type="button" @click="triggerImport" :disabled="saving">
+            <span class="button-icon">{{ actionIconMap.import }}</span>
+            <span>导入</span>
+          </button>
+          <button v-if="canOperate('export')" class="secondary-button warning-soft-button" type="button" @click="exportUsers" :disabled="rows.length === 0">
+            <span class="button-icon">{{ actionIconMap.export }}</span>
+            <span>导出</span>
+          </button>
+          <label class="check-row user-deleted-toggle">
+            <input type="checkbox" v-model="includeDeleted" @change="loadRows" />
+            <span>显示已删除</span>
+          </label>
+          <input
+            ref="importFileInput"
+            class="visually-hidden"
+            type="file"
+            accept=".csv,text/csv"
+            @change="importUsers"
+          />
+        </div>
+
+    <div v-if="passwordLayer.visible" class="layer-mask">
+      <section class="layer-panel layer-panel-small" role="dialog" aria-modal="true" aria-label="重置密码">
+        <header class="layer-header">
+          <h3>重置密码</h3>
+          <button class="text-button" type="button" @click="closePasswordLayer">
+            <span class="button-icon">{{ actionIconMap.close }}</span>
+            <span>关闭</span>
+          </button>
+        </header>
+        <form class="layer-form" @submit.prevent="submitResetPassword">
+          <div class="layer-form-grid layer-form-grid-single">
+            <label>
+              <span>用户账号</span>
+              <input :value="passwordLayer.username" type="text" disabled />
+            </label>
+            <label>
+              <span>新密码</span>
+              <input v-model="passwordLayer.password" type="password" required />
+            </label>
+            <label>
+              <span>确认密码</span>
+              <input v-model="passwordLayer.confirmPassword" type="password" required />
+            </label>
+          </div>
+          <footer class="layer-footer">
+            <button class="secondary-button" type="button" @click="closePasswordLayer" :disabled="saving">取消</button>
+            <button class="primary-button" type="submit" :disabled="saving">
+              <span>{{ saving ? '提交中...' : '确认重置' }}</span>
+            </button>
+          </footer>
+        </form>
+      </section>
+    </div>
+
+    <div v-if="roleLayer.visible" class="layer-mask">
+      <section class="layer-panel layer-panel-small" role="dialog" aria-modal="true" aria-label="分配角色">
+        <header class="layer-header">
+          <h3>分配角色</h3>
+          <button class="text-button" type="button" @click="closeRoleLayer">
+            <span class="button-icon">{{ actionIconMap.close }}</span>
+            <span>关闭</span>
+          </button>
+        </header>
+        <form class="layer-form" @submit.prevent="submitAssignRoles">
+          <div class="layer-form-grid layer-form-grid-single">
+            <label>
+              <span>用户账号</span>
+              <input :value="roleLayer.username" type="text" disabled />
+            </label>
+            <label>
+              <span>用户角色</span>
+              <select v-model="roleLayer.roleIds" multiple>
+                <option v-for="item in roleOptions" :key="item.id" :value="item.id">
+                  {{ item.name }}
+                </option>
+              </select>
+            </label>
+          </div>
+          <footer class="layer-footer">
+            <button class="secondary-button" type="button" @click="closeRoleLayer" :disabled="saving">取消</button>
+            <button class="primary-button" type="submit" :disabled="saving">
+              <span>{{ saving ? '提交中...' : '保存角色' }}</span>
+            </button>
+          </footer>
+        </form>
+      </section>
+    </div>
+
+    <div v-if="formVisible" class="layer-mask">
+      <section class="layer-panel user-form-panel" role="dialog" aria-modal="true" :aria-label="isEditing ? '修改用户' : '添加用户'">
+        <header class="layer-header">
+          <h3>{{ isEditing ? '修改用户' : '添加用户' }}</h3>
+          <button class="text-button" type="button" @click="cancelForm">
+            <span class="button-icon">{{ actionIconMap.close }}</span>
+            <span>关闭</span>
+          </button>
+        </header>
+
+        <form class="layer-form" @submit.prevent="saveCurrent">
+          <div class="user-form-body">
+            <label class="user-form-row">
+              <span class="user-form-label required">用户昵称</span>
+              <input v-model="form.nickname" type="text" placeholder="请输入用户昵称" required />
+            </label>
+            <div class="user-form-row">
+              <span class="user-form-label">归属部门</span>
+              <el-tree-select
+                v-model="form.department_id"
+                class="query-control user-form-control user-form-tree-select"
+                :data="departmentTreeOptions"
+                :props="{ label: 'label', children: 'children' }"
+                node-key="value"
+                placeholder="请选择归属部门"
+                empty-text="暂无部门数据"
+                clearable
+                filterable
+                :reserve-keyword="false"
+                check-strictly
+                default-expand-all
+                :automatic-dropdown="false"
+                :teleported="true"
+                :popper-options="{ modifiers: [{ name: 'offset', options: { offset: [0, 0] } }] }"
+                popper-class="query-select-popper user-form-select-popper user-form-tree-popper"
+                :render-after-expand="false"
+              />
+            </div>
+
+            <label class="user-form-row">
+              <span class="user-form-label">手机号码</span>
+              <input v-model="form.phone" type="tel" placeholder="请输入手机号码" />
+            </label>
+            <label class="user-form-row">
+              <span class="user-form-label">邮箱</span>
+              <input v-model="form.email" type="email" placeholder="请输入邮箱" />
+            </label>
+
+            <label class="user-form-row">
+              <span class="user-form-label required">用户名称</span>
+              <input
+                v-model="form.username"
+                type="text"
+                placeholder="请输入用户名称"
+                required
+                :disabled="isEditing"
+              />
+            </label>
+            <label class="user-form-row">
+              <span class="user-form-label" :class="{ required: !isEditing }">用户密码</span>
+              <input
+                v-model="form.password"
+                type="password"
+                :required="!isEditing"
+                :placeholder="isEditing ? '留空则不修改密码' : '请输入用户密码'"
+              />
+            </label>
+
+            <label class="user-form-row">
+              <span class="user-form-label">用户性别</span>
+              <select v-model="form.gender">
+                <option value="">请选择性别</option>
+                <option value="男">男</option>
+                <option value="女">女</option>
+                <option value="保密">保密</option>
+              </select>
+            </label>
+            <div class="user-form-row user-form-status">
+              <span class="user-form-label">状态</span>
+              <label class="role-radio">
+                <input v-model="form.is_active" type="radio" :value="true" />
+                <span>正常</span>
+              </label>
+              <label class="role-radio">
+                <input v-model="form.is_active" type="radio" :value="false" />
+                <span>停用</span>
+              </label>
+            </div>
+
+            <div class="user-form-row">
+              <span class="user-form-label">岗位</span>
+              <el-select
+                v-model="form.position_ids"
+                class="query-control user-form-control user-form-role-select"
+                placeholder="请选择岗位"
+                clearable
+                filterable
+                multiple
+                collapse-tags
+                collapse-tags-tooltip
+                :max-collapse-tags="2"
+                :reserve-keyword="false"
+                no-data-text="暂无岗位数据"
+                :fit-input-width="true"
+                :automatic-dropdown="false"
+                :teleported="true"
+                :popper-options="{ modifiers: [{ name: 'offset', options: { offset: [0, 0] } }] }"
+                popper-class="query-select-popper user-form-select-popper user-form-role-popper"
+              >
+                <el-option
+                  v-for="item in positionOptions"
+                  :key="item.id"
+                  :label="item.name"
+                  :value="item.id"
+                  :disabled="item.is_deleted || item.status === 1"
+                >
+                  <div class="user-role-option">
+                    <span class="user-role-option-main">{{ item.name }}</span>
+                    <span class="user-role-option-code">{{ item.code }}</span>
+                    <span class="user-role-option-status" :class="{ off: item.status === 1 || item.is_deleted }">
+                      {{ item.is_deleted ? '已删除' : item.status === 0 ? '正常' : '停用' }}
+                    </span>
+                  </div>
+                </el-option>
+              </el-select>
+            </div>
+            <div class="user-form-row">
+              <span class="user-form-label">角色</span>
+              <el-select
+                v-model="form.role_id"
+                class="query-control user-form-control user-form-role-select"
+                placeholder="请选择角色"
+                clearable
+                filterable
+                :reserve-keyword="false"
+                no-data-text="暂无角色数据"
+                :fit-input-width="true"
+                :automatic-dropdown="false"
+                :teleported="true"
+                :popper-options="{ modifiers: [{ name: 'offset', options: { offset: [0, 0] } }] }"
+                popper-class="query-select-popper user-form-select-popper user-form-role-popper"
+              >
+                <el-option
+                  v-for="item in roleOptions"
+                  :key="item.id"
+                  :label="item.name"
+                  :value="item.id"
+                  :disabled="item.is_deleted || !item.is_active"
+                >
+                  <div class="user-role-option">
+                    <span class="user-role-option-main">{{ item.name }}</span>
+                    <span class="user-role-option-code">{{ item.code }}</span>
+                    <span class="user-role-option-status" :class="{ off: !item.is_active || item.is_deleted }">
+                      {{ item.is_deleted ? '已删除' : item.is_active ? '正常' : '停用' }}
+                    </span>
+                  </div>
+                </el-option>
+              </el-select>
+            </div>
+
+            <label class="user-form-row user-form-full">
+              <span class="user-form-label">备注</span>
+              <textarea v-model="form.remark" rows="3" placeholder="请输入内容"></textarea>
+            </label>
+
+            <label class="user-form-row user-form-full">
+              <span class="user-form-label">联系方式</span>
+              <textarea
+                v-model="form.contacts_text"
+                rows="2"
+                placeholder="其他联系方式，每行填写一个"
+              ></textarea>
+            </label>
+          </div>
+
+          <footer class="layer-footer">
+            <button class="secondary-button" type="button" @click="cancelForm" :disabled="saving">取消</button>
+            <button type="submit" class="primary-button" :disabled="saving">
+              <span>{{ saving ? '保存中...' : '确定' }}</span>
+            </button>
+          </footer>
+        </form>
+      </section>
+    </div>
+
+    <section class="resource-list">
+      
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th class="selection-cell">
+                  <input
+                    type="checkbox"
+                    :checked="isAllRowsSelected"
+                    :disabled="selectableRows.length === 0"
+                    @change="toggleAllRows"
+                  />
+                </th>
+                <th>用户编号</th>
+                <th>用户名称</th>
+                <th>用户昵称</th>
+                <th>邮箱</th>
+                <th>联系方式</th>
+                <th>管理员</th>
+                <th>状态</th>
+                <th>删除</th>
+                <th>创建时间</th>
+                <th>更新时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="loading"><td colspan="12" class="empty-cell">加载中...</td></tr>
+              <tr v-else-if="rows.length === 0"><td colspan="12" class="empty-cell">暂无数据</td></tr>
+              <tr v-for="item in rows" v-else :key="item.id" :class="{ deleted: item.is_deleted }">
+                <td class="selection-cell">
+                  <input
+                    type="checkbox"
+                    :checked="selectedRowIds.includes(item.id)"
+                    :disabled="item.is_deleted || item.username === 'admin'"
+                    @change="toggleRowSelection(item)"
+                  />
+                </td>
+                <td>{{ item.id }}</td>
+                <td><span class="link-text">{{ item.username }}</span></td>
+                <td>{{ item.nickname || '-' }}</td>
+                <td>{{ item.email }}</td>
+                <td>{{ displayContacts(item.contacts) }}</td>
+                <td>{{ item.is_admin ? '是' : '否' }}</td>
+                <td><span class="switch-pill" :class="{ off: !item.is_active }"><i></i></span></td>
+                <td>{{ item.is_deleted ? '已删除' : '未删除' }}</td>
+                <td>{{ formatDate(item.created_at) }}</td>
+                <td>{{ formatDate(item.updated_at) }}</td>
+                <td class="action-cell">
+                
+                  <button
+                    v-if="canOperate('update')"
+                    type="button"
+                    class="table-link-button"
+                    @click="editRow(item)"
+                    :disabled="item.username === 'admin'"
+                    :title="item.username === 'admin' ? 'admin 用户不能修改' : ''"
+                  >
+                    <span class="button-icon">{{ actionIconMap.update }}</span>
+                    <span>修改</span>
+                  </button>
+                  <button
+                    v-if="hasPermission('system:user:reset-password')"
+                    type="button"
+                    class="table-link-button"
+                    @click="showResetPassword(item)"
+                    :disabled="item.is_deleted || item.username === 'admin'"
+                    :title="item.username === 'admin' ? 'admin 用户不能重置密码' : ''"
+                  >
+                    <span>重置密码</span>
+                  </button>
+                  <button
+                    v-if="hasPermission('system:user:assign-role')"
+                    type="button"
+                    class="table-link-button"
+                    @click="showAssignRoles(item)"
+                    :disabled="item.is_deleted || relationLoading || item.username === 'admin'"
+                    :title="item.username === 'admin' ? 'admin 用户不能分配角色' : ''"
+                  >
+                    <span>分配角色</span>
+                  </button>
+                  <button
+                    v-if="canOperate('delete')"
+                    type="button"
+                    class="table-link-button danger-link-button"
+                    @click="deleteRow(item)"
+                    :disabled="item.is_deleted || item.username === 'admin'"
+                    :title="item.username === 'admin' ? '内置 admin 用户不能删除' : ''"
+                  >
+                    <span class="button-icon">{{ actionIconMap.delete }}</span>
+                    <span>删除</span>
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+    </section>
+      </section>
+    </div>
+
+    <div v-if="relationPanel.visible" class="layer-mask">
+      <section class="layer-panel relation-layer-panel" role="dialog" aria-modal="true" :aria-label="relationPanel.title">
+        <header class="layer-header">
+          <h3>{{ relationPanel.title }}</h3>
+          <button class="text-button" type="button" @click="closeRelationPanel">
+            <span class="button-icon">{{ actionIconMap.close }}</span>
+            <span>关闭</span>
+          </button>
+        </header>
+
+        <div class="relation-layer-body">
+          <div v-if="relationLoading" class="relation-empty">查询中...</div>
+          <div v-else-if="relationPanel.rows.length === 0" class="relation-empty">暂无关联数据</div>
+          <div v-else class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>ID</th><th>部门名称</th><th>部门编码</th><th>状态</th><th>更新时间</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="item in relationPanel.rows" :key="item.id">
+                  <td>{{ item.id }}</td>
+                  <td>{{ item.name }}</td>
+                  <td>{{ item.code }}</td>
+                  <td>{{ item.is_active ? '正常' : '禁用' }}</td>
+                  <td>{{ formatDate(item.updated_at) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <footer class="layer-footer">
+          <button class="secondary-button" type="button" @click="closeRelationPanel">关闭</button>
+        </footer>
+      </section>
+    </div>
+  </div>
+</section>

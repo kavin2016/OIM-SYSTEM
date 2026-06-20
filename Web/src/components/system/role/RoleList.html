@@ -1,0 +1,266 @@
+<section class="admin-panel">
+  <div v-if="isPageLoading" class="loading-layer">
+    <div class="loading-box">{{ loadingText }}</div>
+  </div>
+
+  <div v-if="!canAccessPage" class="admin-warning">当前用户没有角色管理权限，无法访问该模块。</div>
+
+  <div v-else>
+    <p v-if="message" class="info-message">{{ message }}</p>
+
+    <form class="query-panel" @submit.prevent="loadRows">
+      <div class="query-header">
+        <div>
+          <h3>查询条件</h3>
+          <span v-if="activeQueryCount > 0" class="query-count">已选 {{ activeQueryCount }} 项</span>
+        </div>
+      </div>
+
+      <div class="query-body">
+        <div class="query-grid">
+          <label>
+            <span>角色名称</span>
+            <input v-model="queryForm.name" type="text" placeholder="支持模糊查询" />
+          </label>
+          <label>
+            <span>角色编码</span>
+            <input v-model="queryForm.code" type="text" placeholder="支持模糊查询" />
+          </label>
+          <label>
+            <span>角色状态</span>
+            <select v-model="queryForm.status">
+              <option value="">全部</option>
+              <option value="active">正常</option>
+              <option value="inactive">禁用</option>
+            </select>
+          </label>
+       
+        </div>
+      </div>
+
+      <div class="query-actions">
+        <button v-if="canOperate('query')" class="primary-button" type="submit" :disabled="loading">
+          <span class="button-icon">{{ actionIconMap.query }}</span>
+          <span>{{ loading ? '查询中...' : '查询' }}</span>
+        </button>
+        <button class="secondary-button" type="button" @click="resetQuery" :disabled="loading">
+          <span>↻</span>
+          <span>重置</span>
+        </button>
+      </div>
+    </form>
+
+    <div class="query-action-row">
+      <button v-if="canOperate('create')" class="primary-button" type="button" @click="startCreate">
+        <span class="button-icon">{{ actionIconMap.create }}</span>
+        <span>增加</span>
+      </button>
+    </div>
+
+    <div v-if="formVisible" class="layer-mask">
+      <section class="layer-panel role-form-panel" role="dialog" aria-modal="true" :aria-label="isEditing ? '修改角色' : '增加角色'">
+        <header class="layer-header">
+          <h3>{{ isEditing ? '修改角色' : '增加角色' }}</h3>
+          <button class="text-button" type="button" @click="cancelForm">
+            <span class="button-icon">{{ actionIconMap.close }}</span>
+            <span>关闭</span>
+          </button>
+        </header>
+
+        <form class="layer-form" @submit.prevent="saveCurrent">
+          <div class="role-form-body">
+            <label class="role-form-row">
+              <span class="role-form-label required">角色名称</span>
+              <input v-model="form.name" type="text" placeholder="请输入角色名称" required />
+            </label>
+
+            <label class="role-form-row">
+              <span class="role-form-label required with-help">权限字符</span>
+              <input v-model="form.code" type="text" placeholder="请输入权限字符" required />
+            </label>
+
+            <label class="role-form-row role-form-row-compact">
+              <span class="role-form-label required">角色顺序</span>
+              <input v-model.number="form.sort_order" type="number" min="0" step="1" required />
+            </label>
+
+            <div class="role-form-row role-form-status">
+              <span class="role-form-label">状态</span>
+              <label class="role-radio">
+                <input v-model="form.is_active" type="radio" :value="true" />
+                <span>正常</span>
+              </label>
+              <label class="role-radio">
+                <input v-model="form.is_active" type="radio" :value="false" />
+                <span>停用</span>
+              </label>
+            </div>
+
+            <div class="role-form-row role-menu-row">
+              <span class="role-form-label">菜单权限</span>
+              <div class="role-menu-panel">
+                <div class="role-menu-toolbar">
+                  <label class="role-check">
+                    <input
+                      v-model="rolePermissionExpanded"
+                      type="checkbox"
+                      @change="setRolePermissionExpanded(rolePermissionExpanded)"
+                    />
+                    <span>展开/折叠</span>
+                  </label>
+                  <label class="role-check">
+                    <input v-model="rolePermissionCheckAll" type="checkbox" @change="toggleRolePermissionCheckAll" />
+                    <span>全选/全不选</span>
+                  </label>
+                  <label class="role-check role-check-primary">
+                    <input
+                      v-model="rolePermissionLinkParents"
+                      type="checkbox"
+                      @change="toggleRolePermissionLinkParents"
+                    />
+                    <span>父子联动</span>
+                  </label>
+                </div>
+
+                <div class="role-permission-tree-wrap">
+                  <el-tree
+                    ref="rolePermissionTreeRef"
+                    class="role-permission-tree"
+                    :data="permissionTreeOptions"
+                    node-key="value"
+                    show-checkbox
+                    default-expand-all
+                    :check-strictly="!rolePermissionLinkParents"
+                    :props="{ label: 'label', children: 'children' }"
+                    @check="handleRolePermissionCheck"
+                  />
+                  <div v-if="permissionTreeOptions.length === 0" class="relation-empty">暂无菜单权限数据</div>
+                </div>
+              </div>
+            </div>
+
+            <label class="role-form-row">
+              <span class="role-form-label">备注</span>
+              <textarea v-model="form.description" rows="3" placeholder="请输入内容"></textarea>
+            </label>
+          </div>
+          <footer class="layer-footer">
+            <button class="secondary-button" type="button" @click="cancelForm" :disabled="saving">取消</button>
+            <button type="submit" class="primary-button" :disabled="saving">
+              <span>{{ saving ? '保存中...' : '确定' }}</span>
+            </button>
+          </footer>
+        </form>
+      </section>
+    </div>
+
+    <section class="resource-list">
+      <div class="list-toolbar">
+        <h3>角色列表</h3>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>名称</th>
+              <th>编码</th>
+              <th>顺序</th>
+              <th>描述</th>
+              <th>状态</th>
+              <th>删除</th>
+              <th>更新时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="loading"><td colspan="9" class="empty-cell">加载中...</td></tr>
+            <tr v-else-if="rows.length === 0"><td colspan="9" class="empty-cell">暂无数据</td></tr>
+            <tr v-for="item in rows" v-else :key="item.id" :class="{ deleted: item.is_deleted }">
+              <td>{{ item.id }}</td>
+              <td>{{ item.name }}</td>
+              <td>{{ item.code }}</td>
+              <td>{{ item.sort_order }}</td>
+              <td>{{ item.description || '-' }}</td>
+              <td><span class="status-pill" :class="{ off: !item.is_active }">{{ item.is_active ? '正常' : '禁用' }}</span></td>
+              <td>{{ item.is_deleted ? '已删除' : '未删除' }}</td>
+              <td>{{ formatDate(item.updated_at) }}</td>
+              <td class="action-cell">
+                <button v-if="canOperate('query')" type="button" class="secondary-button" @click="showRolePermissions(item)" :disabled="relationLoading">
+                  <span class="button-icon">{{ actionIconMap.permissions }}</span>
+                  <span>权限</span>
+                </button>
+                <button
+                  v-if="canOperate('update')"
+                  type="button"
+                  class="secondary-button"
+                  @click="editRow(item)"
+                  :disabled="item.code === 'admin'"
+                  :title="item.code === 'admin' ? '系统内置 admin 角色不能修改' : ''"
+                >
+                  <span class="button-icon">{{ actionIconMap.update }}</span>
+                  <span>编辑</span>
+                </button>
+                <button
+                  v-if="canOperate('delete')"
+                  type="button"
+                  class="danger-button"
+                  @click="deleteRow(item)"
+                  :disabled="item.is_deleted || item.code === 'admin'"
+                  :title="item.code === 'admin' ? '系统内置 admin 角色不能删除' : ''"
+                >
+                  <span class="button-icon">{{ actionIconMap.delete }}</span>
+                  <span>删除</span>
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <div v-if="relationPanel.visible" class="layer-mask">
+      <section class="layer-panel relation-layer-panel" role="dialog" aria-modal="true" :aria-label="relationPanel.title">
+        <header class="layer-header">
+          <h3>{{ relationPanel.title }}</h3>
+          <button class="text-button" type="button" @click="closeRelationPanel">
+            <span class="button-icon">{{ actionIconMap.close }}</span>
+            <span>关闭</span>
+          </button>
+        </header>
+
+        <div class="relation-layer-body">
+          <div v-if="relationLoading" class="relation-empty">查询中...</div>
+          <div v-else-if="relationPanel.rows.length === 0" class="relation-empty">暂无关联数据</div>
+          <div v-else class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>ID</th><th>权限名称</th><th>权限编码</th><th>类型</th><th>路径</th><th>排序</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="item in relationDisplayRows" :key="item.id">
+                  <td>{{ item.id }}</td>
+                  <td>
+                    <span class="tree-cell" :style="{ '--tree-depth': item.treeDepth || 0 }">
+                      <span class="tree-branch" aria-hidden="true">{{ item.treeDepth > 0 ? '└' : '' }}</span>
+                      <span>{{ item.name }}</span>
+                    </span>
+                  </td>
+                  <td>{{ item.code }}</td>
+                  <td>{{ item.type === 'menu' ? '菜单' : '按钮' }}</td>
+                  <td>{{ item.path || '-' }}</td>
+                  <td>{{ item.sort_order }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <footer class="layer-footer">
+          <button class="secondary-button" type="button" @click="closeRelationPanel">关闭</button>
+        </footer>
+      </section>
+    </div>
+  </div>
+</section>

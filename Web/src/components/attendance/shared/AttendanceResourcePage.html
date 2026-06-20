@@ -1,0 +1,121 @@
+<section class="admin-panel">
+  <div v-if="!canAccessPage" class="admin-warning">当前用户没有{{ title }}权限，无法访问该模块。</div>
+
+  <div v-else>
+    <p v-if="message" class="info-message">{{ message }}</p>
+
+    <form class="query-panel" @submit.prevent="loadRows">
+      <div class="query-header">
+        <div>
+          <h3>{{ title }}</h3>
+          <span class="query-count">考勤管理</span>
+        </div>
+      </div>
+
+      <div class="query-body">
+        <div class="query-grid">
+          <label v-for="field in queryFields" :key="field[0]">
+            <span>{{ field[1] }}</span>
+            <select v-if="field[2] === 'select'" v-model="queryForm[field[0]]">
+              <option v-for="option in field[3]" :key="option[0]" :value="option[0]">{{ option[1] }}</option>
+            </select>
+            <input v-else v-model="queryForm[field[0]]" :type="queryInputType(field)" />
+          </label>
+          <div v-if="queryFields.length === 0" class="empty-cell">当前模块暂无高级筛选</div>
+        </div>
+      </div>
+
+      <div class="query-actions">
+        <button class="primary-button" type="submit" :disabled="loading">
+          <span>{{ loading ? '查询中...' : '查询' }}</span>
+        </button>
+        <button class="secondary-button" type="button" @click="resetQuery">重置</button>
+      </div>
+    </form>
+
+    <div class="query-action-row">
+      <button v-if="canCreate" class="primary-button" type="button" @click="startCreate">新增</button>
+
+      <div v-if="config.rebuild === 'daily'" class="inline-actions">
+        <input v-model="rebuildForm.work_date" type="date" />
+        <input v-model="rebuildForm.user_id" type="number" min="1" placeholder="用户ID" />
+        <button class="secondary-button" type="button" @click="rebuildReport" :disabled="saving">重算日报</button>
+        <button class="secondary-button" type="button" @click="exportReport" :disabled="saving">导出</button>
+      </div>
+
+      <div v-if="config.rebuild === 'monthly'" class="inline-actions">
+        <input v-model.number="rebuildForm.year" type="number" min="2000" />
+        <input v-model.number="rebuildForm.month" type="number" min="1" max="12" />
+        <input v-model="rebuildForm.user_id" type="number" min="1" placeholder="用户ID" />
+        <button class="secondary-button" type="button" @click="rebuildReport" :disabled="saving">重算月报</button>
+        <button class="secondary-button" type="button" @click="exportReport" :disabled="saving">导出</button>
+      </div>
+    </div>
+
+    <div v-if="formVisible" class="layer-mask">
+      <section class="layer-panel" role="dialog" aria-modal="true" :aria-label="isEditing ? '编辑' : '新增'">
+        <header class="layer-header">
+          <h3>{{ isEditing ? '编辑' : '新增' }}{{ title }}</h3>
+          <button class="dialog-close-button" type="button" aria-label="关闭" title="关闭" @click="cancelForm">×</button>
+        </header>
+
+        <form class="layer-form" @submit.prevent="saveCurrent">
+          <div class="layer-form-grid">
+            <label v-for="field in visibleFields" :key="field[0]">
+              <span>{{ field[1] }}</span>
+              <select v-if="field[2] === 'boolean'" v-model="form[field[0]]">
+                <option :value="true">是</option>
+                <option :value="false">否</option>
+              </select>
+              <input
+                v-else
+                v-model="form[field[0]]"
+                :type="field[2] || 'text'"
+                :required="isFieldRequired(field)"
+              />
+            </label>
+          </div>
+          <footer class="layer-footer">
+            <button class="secondary-button" type="button" @click="cancelForm" :disabled="saving">取消</button>
+            <button class="primary-button" type="submit" :disabled="saving">{{ saving ? '保存中...' : '保存' }}</button>
+          </footer>
+        </form>
+      </section>
+    </div>
+
+    <section class="resource-list">
+      <div class="list-toolbar">
+        <h3>{{ title }}列表</h3>
+        <label v-if="config.apiKey === 'requests'" class="approval-remark">
+          <span>审批备注</span>
+          <input v-model="approvalRemark" type="text" />
+        </label>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th v-for="column in columns" :key="column[0]">{{ column[1] }}</th>
+              <th v-if="canUpdate || canDelete || canApprove">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="loading"><td :colspan="columns.length + 1" class="empty-cell">加载中...</td></tr>
+            <tr v-else-if="!rows || rows.length === 0"><td :colspan="columns.length + 1" class="empty-cell">暂无数据</td></tr>
+            <tr v-for="item in rows" v-else :key="item.id">
+              <td v-for="column in columns" :key="column[0]">{{ formatCell(item, column) }}</td>
+              <td v-if="canUpdate || canDelete || canApprove" class="action-cell">
+                <button v-if="canUpdate" class="secondary-button" type="button" @click="editRow(item)">编辑</button>
+                <button v-if="canDelete" class="danger-button" type="button" @click="deleteRow(item)">删除</button>
+                <button v-if="canWithdrawRow(item)" class="secondary-button" type="button" @click="withdrawRow(item)">撤回</button>
+                <button v-if="canApprove && item.status === 'pending'" class="primary-button" type="button" @click="approveRow(item, 'approved')">通过</button>
+                <button v-if="canApprove && item.status === 'pending'" class="danger-button" type="button" @click="approveRow(item, 'rejected')">驳回</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</section>

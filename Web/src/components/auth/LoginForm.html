@@ -1,0 +1,44 @@
+<div class="login-card">
+  <div class="login-logo">
+    <img src="/logo.jpg" alt="OIM Logo" class="logo-image" />
+  </div>
+  <h1>运营综合管理系统</h1>
+  <form class="login-form" @submit.prevent="handleLogin">
+    <label>
+      <span>用户名</span>
+      <input v-model="username" type="text" placeholder="请输入用户名" required />
+    </label>
+    <label>
+      <span>密&nbsp;&nbsp;&nbsp;&nbsp;码</span>
+      <input v-model="password" type="password" placeholder="请输入密码" required />
+    </label>
+    <label class="captcha-row">
+      <div class="captcha-field">
+        <span>验证码</span>
+        <input
+          v-model="captcha"
+          type="text"
+          placeholder="请输入验证码"
+          maxlength="6"
+          required
+        />
+      </div>
+      <button
+        type="button"
+        class="captcha-button"
+        @click="refreshCaptcha"
+        :disabled="captchaLoading || loading"
+        aria-label="刷新验证码"
+      >
+        <img v-if="captchaImage" :key="captchaVersion" :src="captchaImage" alt="验证码" class="captcha-image" />
+        <span v-else>{{ captchaLoading ? '加载中...' : '刷新' }}</span>
+      </button>
+    </label>
+    <button type="submit" class="login-button" :disabled="loading || captchaLoading || !captchaToken">
+      {{ loading ? '登录中...' : '登录' }}
+    </button>
+  </form>
+  <p class="login-note">提示：点击验证码按钮可刷新验证码</p>
+
+  <p v-if="errorMessage" class="login-error">{{ errorMessage }}</p>
+</div>
