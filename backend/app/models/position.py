@@ -7,7 +7,7 @@ from ..database import Base
 
 
 class Position(Base):
-    __tablename__ = "positions"
+    __tablename__ = "sys_positions"
 
     id = Column(Integer, primary_key=True, index=True, comment="岗位ID")
     code = Column(String(64), unique=True, index=True, nullable=False, comment="岗位编码")

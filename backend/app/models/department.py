@@ -7,10 +7,10 @@ from ..database import Base
 
 
 class Department(Base):
-    __tablename__ = "departments"
+    __tablename__ = "sys_departments"
 
     id = Column(Integer, primary_key=True, index=True, comment="部门ID")
-    parent_id = Column(Integer, ForeignKey("departments.id", ondelete="SET NULL"), nullable=True, comment="上级部门ID")
+    parent_id = Column(Integer, ForeignKey("sys_departments.id", ondelete="SET NULL"), nullable=True, comment="上级部门ID")
     name = Column(String(100), unique=True, index=True, nullable=False, comment="部门名称")
     code = Column(String(64), unique=True, index=True, nullable=False, comment="部门编码")
     description = Column(Text, nullable=True, comment="部门描述")

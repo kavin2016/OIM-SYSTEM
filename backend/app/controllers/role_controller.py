@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, status
 
 from ..dependencies import RoleServiceDep
-from ..schemas.permission import PermissionRead
+from ..schemas.permission import RolePermissionRead
 from ..schemas.role import RoleCreate, RoleRead, RoleUpdate
 from ..security import require_permission
 
@@ -52,7 +52,7 @@ def get_role(
     return role_service.get_required(role_id, include_deleted=include_deleted)
 
 
-@router.get("/{role_id}/permissions", response_model=list[PermissionRead])
+@router.get("/{role_id}/permissions", response_model=list[RolePermissionRead])
 def list_role_permissions(
     role_id: int,
     role_service: RoleServiceDep,

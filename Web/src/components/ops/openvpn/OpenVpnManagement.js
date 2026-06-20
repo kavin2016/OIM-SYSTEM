@@ -2,8 +2,8 @@ import '../../../styles/components/resource-page.css'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { token, hasPermission } from '../../../composables/useAuth.js'
-import { adminAPI } from '../../../api/admin.js'
 import { openvpnAPI } from '../../../api/openvpn.js'
+import { actionIconMap } from '../../system/resourcePageConstants.js'
 
 const tabs = [
   { key: 'servers', label: '服务器管理', permission: 'ops:openvpn:server:query' },
@@ -47,6 +47,10 @@ function emptyRuleForm() {
   }
 }
 
+function asArray(value) {
+  return Array.isArray(value) ? value : []
+}
+
 export default {
   setup() {
     const activeTab = ref('servers')
@@ -72,24 +76,41 @@ export default {
     const ruleQuery = reactive({ target_type: '', server_id: '' })
     const enableLayer = reactive({ visible: false, user_id: '', server_id: '', vpn_username: '', remark: '' })
     const assignLayer = reactive({ visible: false, account_id: null, server_id: '' })
+    const selectedRowIds = ref([])
 
     const visibleTabs = computed(() => tabs.filter((tab) => hasPermission(tab.permission)))
     const can = (permission) => hasPermission(permission)
+    const activeRows = computed(() => {
+      const map = {
+        servers: servers.value,
+        accounts: accounts.value,
+        certificates: certificates.value,
+        sessions: sessions.value,
+        logs: logs.value,
+        rules: rules.value,
+      }
+      return asArray(map[activeTab.value])
+    })
+    const selectedRows = computed(() => asArray(activeRows.value).filter((row) => selectedRowIds.value.includes(row.id)))
+    const selectedRow = computed(() => selectedRows.value[0] || null)
+    const isAllRowsSelected = computed(
+      () => activeRows.value.length > 0 && selectedRows.value.length === activeRows.value.length,
+    )
     const dashboard = computed(() => ({
-      serverTotal: servers.value.length,
-      onlineServers: servers.value.filter((item) => item.status === 'online').length,
-      onlineSessions: sessions.value.filter((item) => item.status === 'online').length,
-      expiringCerts: certificates.value.filter((item) => {
+      serverTotal: asArray(servers.value).length,
+      onlineServers: asArray(servers.value).filter((item) => item.status === 'online').length,
+      onlineSessions: asArray(sessions.value).filter((item) => item.status === 'online').length,
+      expiringCerts: asArray(certificates.value).filter((item) => {
         if (!item.expires_at || item.status !== 'issued') return false
         return new Date(item.expires_at).getTime() - Date.now() < 1000 * 60 * 60 * 24 * 30
       }).length,
     }))
 
     const targetOptions = computed(() => {
-      if (ruleForm.target_type === 'user') return users.value.map((item) => ({ id: item.id, name: `${item.username}${item.nickname ? ` / ${item.nickname}` : ''}` }))
-      if (ruleForm.target_type === 'role') return roles.value.map((item) => ({ id: item.id, name: item.name }))
-      if (ruleForm.target_type === 'position') return positions.value.map((item) => ({ id: item.id, name: item.name }))
-      return departments.value.map((item) => ({ id: item.id, name: item.name }))
+      if (ruleForm.target_type === 'user') return asArray(users.value).map((item) => ({ id: item.id, name: `${item.username}${item.nickname ? ` / ${item.nickname}` : ''}` }))
+      if (ruleForm.target_type === 'role') return asArray(roles.value).map((item) => ({ id: item.id, name: item.name }))
+      if (ruleForm.target_type === 'position') return asArray(positions.value).map((item) => ({ id: item.id, name: item.name }))
+      return asArray(departments.value).map((item) => ({ id: item.id, name: item.name }))
     })
 
     function formatDate(value) {
@@ -113,7 +134,7 @@ export default {
     }
 
     function serverName(id) {
-      return servers.value.find((item) => item.id === id)?.name || '-'
+      return asArray(servers.value).find((item) => item.id === id)?.name || '-'
     }
 
     function resetReactive(target, source) {
@@ -122,40 +143,35 @@ export default {
     }
 
     async function loadServers() {
-      servers.value = await openvpnAPI.listServers(token.value, serverQuery)
+      servers.value = asArray(await openvpnAPI.listServers(token.value, serverQuery))
     }
 
     async function loadAccounts() {
-      accounts.value = await openvpnAPI.listAccounts(token.value, accountQuery)
+      accounts.value = asArray(await openvpnAPI.listAccounts(token.value, accountQuery))
     }
 
     async function loadCertificates() {
-      certificates.value = await openvpnAPI.listCertificates(token.value)
+      certificates.value = asArray(await openvpnAPI.listCertificates(token.value))
     }
 
     async function loadSessions() {
-      sessions.value = await openvpnAPI.listSessions(token.value)
+      sessions.value = asArray(await openvpnAPI.listSessions(token.value))
     }
 
     async function loadLogs() {
-      logs.value = await openvpnAPI.listLogs(token.value)
+      logs.value = asArray(await openvpnAPI.listLogs(token.value))
     }
 
     async function loadRules() {
-      rules.value = await openvpnAPI.listRules(token.value, ruleQuery)
+      rules.value = asArray(await openvpnAPI.listRules(token.value, ruleQuery))
     }
 
     async function loadOptions() {
-      const [userRows, departmentRows, roleRows, positionRows] = await Promise.all([
-        adminAPI.users.list(token.value, { includeDisabled: true }),
-        adminAPI.departments.list(token.value, { includeDisabled: true }),
-        adminAPI.roles.list(token.value, { includeDisabled: true }),
-        adminAPI.positions.list(token.value, { includeDisabled: true }),
-      ])
-      users.value = userRows
-      departments.value = departmentRows
-      roles.value = roleRows
-      positions.value = positionRows
+      const options = await openvpnAPI.listOptions(token.value) || {}
+      users.value = asArray(options.users)
+      departments.value = asArray(options.departments)
+      roles.value = asArray(options.roles)
+      positions.value = asArray(options.positions)
     }
 
     async function loadActiveTab() {
@@ -178,7 +194,122 @@ export default {
 
     function switchTab(key) {
       activeTab.value = key
+      selectedRowIds.value = []
       loadActiveTab()
+    }
+
+    function resetQuery(query, source) {
+      resetReactive(query, source)
+      selectedRowIds.value = []
+      loadActiveTab()
+    }
+
+    function toggleRowSelection(row) {
+      if (selectedRowIds.value.includes(row.id)) {
+        selectedRowIds.value = selectedRowIds.value.filter((id) => id !== row.id)
+        return
+      }
+      selectedRowIds.value = [...selectedRowIds.value, row.id]
+    }
+
+    function toggleAllRows() {
+      selectedRowIds.value = isAllRowsSelected.value ? [] : activeRows.value.map((row) => row.id)
+    }
+
+    function requireSingleSelection(actionName) {
+      if (selectedRows.value.length !== 1) {
+        ElMessage.warning(`请选择一条数据进行${actionName}`)
+        return null
+      }
+      return selectedRow.value
+    }
+
+    function requireAnySelection(actionName) {
+      if (selectedRows.value.length === 0) {
+        ElMessage.warning(`请选择需要${actionName}的数据`)
+        return []
+      }
+      return selectedRows.value
+    }
+
+    function editSelectedServer() {
+      const row = requireSingleSelection('修改')
+      if (row) openEditServer(row)
+    }
+
+    async function deleteSelectedServers() {
+      const rows = requireAnySelection('删除')
+      if (rows.length === 0) return
+      await ElMessageBox.confirm(`确认删除选中的 ${rows.length} 台服务器？`, '删除确认', { type: 'warning' })
+      await Promise.all(rows.map((row) => openvpnAPI.deleteServer(token.value, row.id)))
+      selectedRowIds.value = []
+      ElMessage.success('服务器已删除')
+      await loadServers()
+    }
+
+    async function setDefaultSelectedServer() {
+      const row = requireSingleSelection('设为默认')
+      if (row) await setDefaultServer(row)
+    }
+
+    async function testSelectedServer() {
+      const row = requireSingleSelection('测试')
+      if (row) await testServer(row)
+    }
+
+    function assignSelectedAccountServer() {
+      const row = requireSingleSelection('分配服务器')
+      if (row) openAssignServer(row)
+    }
+
+    async function issueSelectedAccountCertificate() {
+      const row = requireSingleSelection('签发证书')
+      if (row) await issueCertificate(row)
+    }
+
+    async function downloadSelectedAccountConfig() {
+      const row = requireSingleSelection('下载配置')
+      if (row) await downloadConfig(row)
+    }
+
+    async function disableSelectedAccounts() {
+      const rows = requireAnySelection('禁用')
+      if (rows.length === 0) return
+      await ElMessageBox.confirm(`确认禁用选中的 ${rows.length} 个 VPN 账号？`, '禁用确认', { type: 'warning' })
+      await Promise.all(rows.map((row) => openvpnAPI.disableAccount(token.value, row.user_id)))
+      selectedRowIds.value = []
+      ElMessage.success('VPN账号已禁用')
+      await loadAccounts()
+    }
+
+    async function renewSelectedCertificate() {
+      const row = requireSingleSelection('续期')
+      if (row) await renewCertificate(row)
+    }
+
+    async function revokeSelectedCertificate() {
+      const row = requireSingleSelection('吊销')
+      if (row) await revokeCertificate(row)
+    }
+
+    async function kickSelectedSession() {
+      const row = requireSingleSelection('强制下线')
+      if (row) await kickSession(row)
+    }
+
+    function editSelectedRule() {
+      const row = requireSingleSelection('修改')
+      if (row) openEditRule(row)
+    }
+
+    async function deleteSelectedRules() {
+      const rows = requireAnySelection('删除')
+      if (rows.length === 0) return
+      await ElMessageBox.confirm(`确认删除选中的 ${rows.length} 条分配规则？`, '删除确认', { type: 'warning' })
+      await Promise.all(rows.map((row) => openvpnAPI.deleteRule(token.value, row.id)))
+      selectedRowIds.value = []
+      ElMessage.success('分配规则已删除')
+      await loadRules()
     }
 
     function openCreateServer() {
@@ -289,13 +420,22 @@ export default {
 
     async function downloadConfig(row) {
       const result = await openvpnAPI.downloadConfig(token.value, row.id)
-      const blob = new Blob([result.content], { type: 'application/x-openvpn-profile' })
+      downloadTextFile(result.filename, result.content, 'application/x-openvpn-profile')
+    }
+
+    function downloadTextFile(filename, content, type = 'text/plain;charset=utf-8') {
+      const blob = new Blob([content], { type })
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = result.filename
+      link.download = filename
       link.click()
       URL.revokeObjectURL(url)
+    }
+
+    async function exportLogs() {
+      const result = await openvpnAPI.exportLogs(token.value)
+      downloadTextFile(result.filename, result.content, 'text/csv;charset=utf-8')
     }
 
     async function kickSession(row) {
@@ -351,23 +491,36 @@ export default {
     return {
       accountQuery,
       accounts,
+      actionIconMap,
       activeTab,
+      activeRows,
       assignLayer,
+      assignSelectedAccountServer,
       can,
       certificates,
       dashboard,
       departments,
       deleteRule,
+      deleteSelectedRules,
+      deleteSelectedServers,
       deleteServer,
       disableAccount,
+      disableSelectedAccounts,
       downloadConfig,
+      downloadSelectedAccountConfig,
       editingRuleId,
       editingServerId,
+      editSelectedRule,
+      editSelectedServer,
       enableAccount,
       enableLayer,
+      exportLogs,
       formatDate,
       issueCertificate,
+      issueSelectedAccountCertificate,
+      isAllRowsSelected,
       kickSession,
+      kickSelectedSession,
       loadAccounts,
       loadActiveTab,
       loadRules,
@@ -382,7 +535,10 @@ export default {
       openEnableAccount,
       positions,
       renewCertificate,
+      renewSelectedCertificate,
+      resetQuery,
       revokeCertificate,
+      revokeSelectedCertificate,
       roleOptions: roles,
       ruleDialogVisible,
       ruleForm,
@@ -390,6 +546,9 @@ export default {
       rules,
       saveRule,
       saveServer,
+      selectedRow,
+      selectedRowIds,
+      selectedRows,
       serverDialogVisible,
       serverForm,
       serverName,
@@ -397,10 +556,14 @@ export default {
       servers,
       sessions,
       setDefaultServer,
+      setDefaultSelectedServer,
       statusText,
       switchTab,
       targetOptions,
       testServer,
+      testSelectedServer,
+      toggleAllRows,
+      toggleRowSelection,
       users,
       visibleTabs,
     }

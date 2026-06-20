@@ -147,7 +147,12 @@ export function createFormActions(ctx, deps) {
       relationLoading.value = true
       try {
         const rolePermissions = await api.admin.listRolePermissions(token.value, row.id)
-        form.permission_ids = rolePermissions.map((permission) => permission.id)
+        const hasCheckedField = rolePermissions.some((permission) =>
+          Object.prototype.hasOwnProperty.call(permission, 'checked'),
+        )
+        form.permission_ids = rolePermissions
+          .filter((permission) => (hasCheckedField ? permission.checked === true : true))
+          .map((permission) => permission.id)
       } catch (err) {
         message.value = err.message || '加载角色权限失败'
       } finally {

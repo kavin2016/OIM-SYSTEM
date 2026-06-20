@@ -13,6 +13,7 @@ export async function authRequest(path, { token, body, method = 'GET', headers =
 
   let requestBody = body
   if (isForm && body) {
+    requestHeaders['Content-Type'] = 'application/x-www-form-urlencoded'
     requestBody = buildFormBody(body)
   } else if (body && typeof body === 'object') {
     requestHeaders['Content-Type'] = 'application/json'

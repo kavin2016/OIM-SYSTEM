@@ -835,6 +835,36 @@
   background: #ffffff;
 }
 
+.ops-management-page .query-action-row {
+  padding: 0 0 2px;
+}
+
+.ops-management-page .query-grid strong {
+  color: #0f172a;
+  font-size: 1.571em;
+  line-height: 1.2;
+}
+
+.ops-management-page .resource-list {
+  margin-bottom: 12px;
+}
+
+.ops-management-page table {
+  min-width: 1080px;
+}
+
+.selection-cell {
+  width: 42px;
+  text-align: center;
+}
+
+.selection-cell input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #2563eb;
+}
+
 .success-soft-button {
   border: 1px solid #bbf7d0;
   background: #dcfce7;

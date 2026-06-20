@@ -69,6 +69,21 @@ def _permission_id(bind, code):
     return bind.execute(sa.text("SELECT id FROM permissions WHERE code = :code"), {"code": code}).scalar()
 
 
+def _table_exists(bind, table_name):
+    return bool(
+        bind.execute(
+            sa.text(
+                """
+                SELECT 1
+                FROM INFORMATION_SCHEMA.TABLES
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table_name
+                """
+            ),
+            {"table_name": table_name},
+        ).scalar()
+    )
+
+
 def _insert_or_update_permission(bind, item, parent_id=None):
     existing_id = _permission_id(bind, item["code"])
     values = {
@@ -187,6 +202,21 @@ def _grant_to_admin_role(bind, codes):
 
 
 def upgrade():
+    bind = op.get_bind()
+    openvpn_tables = (
+        "openvpn_servers",
+        "openvpn_assignment_rules",
+        "openvpn_accounts",
+        "openvpn_certificates",
+        "openvpn_sessions",
+        "openvpn_connection_logs",
+    )
+    if all(_table_exists(bind, table_name) for table_name in openvpn_tables):
+        for permission in OPENVPN_PERMISSIONS:
+            _insert_or_update_permission(bind, permission)
+        _grant_to_admin_role(bind, _collect_permission_codes(OPENVPN_PERMISSIONS))
+        return
+
     op.create_table(
         "openvpn_servers",
         sa.Column("id", sa.Integer(), primary_key=True, nullable=False, comment="OpenVPN服务器ID"),
@@ -338,7 +368,6 @@ def upgrade():
     op.create_index("ix_openvpn_logs_action", "openvpn_connection_logs", ["action"])
     op.create_index("ix_openvpn_logs_occurred_at", "openvpn_connection_logs", ["occurred_at"])
 
-    bind = op.get_bind()
     for permission in OPENVPN_PERMISSIONS:
         _insert_or_update_permission(bind, permission)
     _grant_to_admin_role(bind, _collect_permission_codes(OPENVPN_PERMISSIONS))

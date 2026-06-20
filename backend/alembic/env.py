@@ -10,7 +10,23 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from app.config import get_database_url
 from app.database import Base
 from app.models import (  # noqa: F401
+    AttendanceDailyResult,
+    AttendanceMonthlySummary,
+    AttendanceRecord,
+    AttendanceRequest,
+    AttendanceRestRule,
+    AttendanceRestRuleDepartment,
+    AttendanceRestRuleUser,
+    AttendanceScheduleItem,
+    AttendanceShift,
     Department,
+    Domain,
+    OpenVpnAccount,
+    OpenVpnAssignmentRule,
+    OpenVpnCertificate,
+    OpenVpnConnectionLog,
+    OpenVpnServer,
+    OpenVpnSession,
     Permission,
     Position,
     Role,

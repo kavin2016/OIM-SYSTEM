@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, Form, HTTPException, status
 
 from ..captcha import CaptchaProvider
@@ -9,6 +11,7 @@ from ..schemas.user import UserCreate, UserRead
 from ..security import create_access_token, get_current_active_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/captcha", response_model=CaptchaResponse)
@@ -27,7 +30,11 @@ def login_for_access_token(
     if not CaptchaProvider.validate(captcha_token, captcha):
         raise HTTPException(status_code=400, detail="验证码不正确或已过期")
 
-    user = user_service.authenticate(username, password)
+    try:
+        user = user_service.authenticate(username, password)
+    except Exception as exc:
+        logger.exception("Login authentication failed unexpectedly for username=%s", username)
+        raise HTTPException(status_code=500, detail="登录认证服务异常，请稍后重试") from exc
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

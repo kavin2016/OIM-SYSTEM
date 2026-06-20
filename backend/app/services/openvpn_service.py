@@ -420,6 +420,65 @@ class OpenVpnService(BaseService[OpenVpnServer]):
             query = query.filter(OpenVpnConnectionLog.action == action)
         return query.order_by(OpenVpnConnectionLog.occurred_at.desc()).offset(skip).limit(limit).all()
 
+    def list_options(self) -> dict:
+        users = (
+            self.db.query(User)
+            .filter(User.is_deleted.is_(False))
+            .order_by(User.id.desc())
+            .limit(1000)
+            .all()
+        )
+        departments = (
+            self.db.query(Department)
+            .filter(Department.is_deleted.is_(False))
+            .order_by(Department.id.desc())
+            .limit(1000)
+            .all()
+        )
+        roles = (
+            self.db.query(Role)
+            .filter(Role.is_deleted.is_(False))
+            .order_by(Role.sort_order.asc(), Role.id.desc())
+            .limit(1000)
+            .all()
+        )
+        positions = (
+            self.db.query(Position)
+            .filter(Position.is_deleted.is_(False))
+            .order_by(Position.sort_order.asc(), Position.id.desc())
+            .limit(1000)
+            .all()
+        )
+        return {
+            "users": [{"id": item.id, "username": item.username, "nickname": item.nickname} for item in users],
+            "departments": [{"id": item.id, "name": item.name} for item in departments],
+            "roles": [{"id": item.id, "name": item.name} for item in roles],
+            "positions": [{"id": item.id, "name": item.name} for item in positions],
+        }
+
+    def export_logs_csv(
+        self,
+        server_id: Optional[int] = None,
+        user_id: Optional[int] = None,
+        action: Optional[str] = None,
+    ) -> tuple[str, str]:
+        rows = self.list_logs(skip=0, limit=10000, server_id=server_id, user_id=user_id, action=action)
+        lines = ["ID,用户ID,服务器ID,动作,结果,VPN IP,公网IP,发生时间,详情"]
+        for row in rows:
+            values = [
+                row.id,
+                row.user_id or "",
+                row.server_id or "",
+                row.action,
+                row.result,
+                row.virtual_ip or "",
+                row.real_ip or "",
+                row.occurred_at.isoformat() if row.occurred_at else "",
+                (row.message or "").replace('"', '""'),
+            ]
+            lines.append(",".join(f'"{value}"' for value in values))
+        return "openvpn-logs.csv", "\n".join(lines)
+
     def resolve_user_server(self, user_id: int, preferred_server_id: Optional[int] = None):
         if preferred_server_id:
             return self.get_server_required(preferred_server_id), "manual", None

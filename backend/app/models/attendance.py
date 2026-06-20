@@ -58,7 +58,7 @@ class AttendanceRestRuleDepartment(Base):
 
     id = Column(Integer, primary_key=True, index=True, comment="休息规则部门关系ID")
     rest_rule_id = Column(Integer, ForeignKey("attendance_rest_rules.id", ondelete="CASCADE"), nullable=False, index=True, comment="休息规则ID")
-    department_id = Column(Integer, ForeignKey("departments.id", ondelete="CASCADE"), nullable=False, index=True, comment="部门ID")
+    department_id = Column(Integer, ForeignKey("sys_departments.id", ondelete="CASCADE"), nullable=False, index=True, comment="部门ID")
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, comment="创建时间")
 
     rule = relationship("AttendanceRestRule", back_populates="departments")
@@ -71,7 +71,7 @@ class AttendanceRestRuleUser(Base):
 
     id = Column(Integer, primary_key=True, index=True, comment="休息规则员工关系ID")
     rest_rule_id = Column(Integer, ForeignKey("attendance_rest_rules.id", ondelete="CASCADE"), nullable=False, index=True, comment="休息规则ID")
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True, comment="用户ID")
+    user_id = Column(Integer, ForeignKey("sys_users.id", ondelete="CASCADE"), nullable=False, index=True, comment="用户ID")
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, comment="创建时间")
 
     rule = relationship("AttendanceRestRule", back_populates="users")
@@ -83,8 +83,8 @@ class AttendanceScheduleItem(Base):
     __table_args__ = (UniqueConstraint("user_id", "work_date", "shift_id", name="uq_attendance_schedule_user_date_shift"),)
 
     id = Column(Integer, primary_key=True, index=True, comment="排班明细ID")
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True, comment="用户ID")
-    department_id = Column(Integer, ForeignKey("departments.id", ondelete="SET NULL"), nullable=True, index=True, comment="部门ID")
+    user_id = Column(Integer, ForeignKey("sys_users.id", ondelete="CASCADE"), nullable=False, index=True, comment="用户ID")
+    department_id = Column(Integer, ForeignKey("sys_departments.id", ondelete="SET NULL"), nullable=True, index=True, comment="部门ID")
     shift_id = Column(Integer, ForeignKey("attendance_shifts.id", ondelete="RESTRICT"), nullable=False, index=True, comment="班次ID")
     work_date = Column(Date, nullable=False, index=True, comment="工作日期")
     source_type = Column(String(32), default="user", nullable=False, comment="来源：user/department/batch/temporary/swap")
@@ -105,7 +105,7 @@ class AttendanceRecord(Base):
     __tablename__ = "attendance_records"
 
     id = Column(Integer, primary_key=True, index=True, comment="打卡记录ID")
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True, comment="用户ID")
+    user_id = Column(Integer, ForeignKey("sys_users.id", ondelete="CASCADE"), nullable=False, index=True, comment="用户ID")
     schedule_item_id = Column(Integer, ForeignKey("attendance_schedule_items.id", ondelete="SET NULL"), nullable=True, index=True, comment="排班明细ID")
     shift_id = Column(Integer, ForeignKey("attendance_shifts.id", ondelete="SET NULL"), nullable=True, index=True, comment="班次ID")
     record_type = Column(String(32), nullable=False, comment="记录类型：checkin/checkout/correction")
@@ -128,7 +128,7 @@ class AttendanceRequest(Base):
 
     id = Column(Integer, primary_key=True, index=True, comment="考勤申请ID")
     request_no = Column(String(64), unique=True, nullable=False, comment="申请编号")
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True, comment="申请用户ID")
+    user_id = Column(Integer, ForeignKey("sys_users.id", ondelete="CASCADE"), nullable=False, index=True, comment="申请用户ID")
     request_type = Column(String(32), nullable=False, index=True, comment="申请类型")
     start_at = Column(DateTime, nullable=False, comment="开始时间")
     end_at = Column(DateTime, nullable=False, comment="结束时间")
@@ -137,7 +137,7 @@ class AttendanceRequest(Base):
     related_schedule_item_id = Column(Integer, ForeignKey("attendance_schedule_items.id", ondelete="SET NULL"), nullable=True, comment="关联排班ID")
     reason = Column(Text, nullable=True, comment="申请原因")
     status = Column(String(32), default="pending", nullable=False, index=True, comment="审批状态")
-    approver_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, comment="审批人ID")
+    approver_id = Column(Integer, ForeignKey("sys_users.id", ondelete="SET NULL"), nullable=True, comment="审批人ID")
     approved_at = Column(DateTime, nullable=True, comment="审批时间")
     approval_remark = Column(Text, nullable=True, comment="审批备注")
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, comment="创建时间")
@@ -151,7 +151,7 @@ class AttendanceDailyResult(Base):
     __table_args__ = (UniqueConstraint("user_id", "work_date", "shift_id", name="uq_attendance_daily_user_date_shift"),)
 
     id = Column(Integer, primary_key=True, index=True, comment="日考勤结果ID")
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True, comment="用户ID")
+    user_id = Column(Integer, ForeignKey("sys_users.id", ondelete="CASCADE"), nullable=False, index=True, comment="用户ID")
     work_date = Column(Date, nullable=False, index=True, comment="考勤日期")
     shift_id = Column(Integer, ForeignKey("attendance_shifts.id", ondelete="SET NULL"), nullable=True, index=True, comment="班次ID")
     schedule_item_id = Column(Integer, ForeignKey("attendance_schedule_items.id", ondelete="SET NULL"), nullable=True, comment="排班明细ID")
@@ -174,7 +174,7 @@ class AttendanceMonthlySummary(Base):
     __table_args__ = (UniqueConstraint("user_id", "year", "month", name="uq_attendance_monthly_user_month"),)
 
     id = Column(Integer, primary_key=True, index=True, comment="月考勤汇总ID")
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True, comment="用户ID")
+    user_id = Column(Integer, ForeignKey("sys_users.id", ondelete="CASCADE"), nullable=False, index=True, comment="用户ID")
     year = Column(Integer, nullable=False, index=True, comment="年份")
     month = Column(Integer, nullable=False, index=True, comment="月份")
     work_days = Column(Integer, default=0, nullable=False, comment="应出勤天数")

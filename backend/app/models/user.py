@@ -7,7 +7,7 @@ from ..database import Base
 
 
 class User(Base):
-    __tablename__ = "users"
+    __tablename__ = "sys_users"
 
     id = Column(Integer, primary_key=True, index=True, comment="用户ID")
     username = Column(String(64), unique=True, index=True, nullable=False, comment="用户名")

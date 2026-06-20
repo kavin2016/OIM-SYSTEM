@@ -83,6 +83,14 @@ def list_servers(
     return openvpn_service.list_servers(skip, limit, include_disabled, include_deleted, name, code, status, region)
 
 
+@router.get("/options")
+def list_openvpn_options(
+    openvpn_service: OpenVpnServiceDep,
+    current_user=Depends(require_permission("ops:openvpn:list")),
+):
+    return openvpn_service.list_options()
+
+
 @router.post("/servers", response_model=OpenVpnServerRead, status_code=status.HTTP_201_CREATED)
 def create_server(
     payload: OpenVpnServerCreate,
@@ -323,3 +331,15 @@ def list_logs(
     current_user=Depends(require_permission("ops:openvpn:log:query")),
 ):
     return [_log_read(item, openvpn_service) for item in openvpn_service.list_logs(skip, limit, server_id, user_id, action)]
+
+
+@router.get("/logs/export", response_model=OpenVpnConfigRead)
+def export_logs(
+    openvpn_service: OpenVpnServiceDep,
+    server_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+    action: Optional[str] = None,
+    current_user=Depends(require_permission("ops:openvpn:log:export")),
+):
+    filename, content = openvpn_service.export_logs_csv(server_id=server_id, user_id=user_id, action=action)
+    return {"filename": filename, "content": content}

@@ -44,3 +44,7 @@ class PermissionRead(PermissionBase):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class RolePermissionRead(PermissionRead):
+    checked: bool = False

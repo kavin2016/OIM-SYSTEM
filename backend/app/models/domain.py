@@ -6,7 +6,7 @@ from ..database import Base
 
 
 class Domain(Base):
-    __tablename__ = "domains"
+    __tablename__ = "sys_domains"
 
     id = Column(Integer, primary_key=True, index=True, comment="域名ID")
     code = Column(String(255), unique=True, index=True, nullable=False, comment="域名地址")

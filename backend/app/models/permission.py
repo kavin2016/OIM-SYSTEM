@@ -7,10 +7,10 @@ from ..database import Base
 
 
 class Permission(Base):
-    __tablename__ = "permissions"
+    __tablename__ = "sys_permissions"
 
     id = Column(Integer, primary_key=True, index=True, comment="权限ID")
-    parent_id = Column(Integer, ForeignKey("permissions.id", ondelete="SET NULL"), nullable=True, index=True, comment="父级权限ID")
+    parent_id = Column(Integer, ForeignKey("sys_permissions.id", ondelete="SET NULL"), nullable=True, index=True, comment="父级权限ID")
     name = Column(String(100), unique=True, index=True, nullable=False, comment="权限名称")
     code = Column(String(100), unique=True, index=True, nullable=False, comment="权限编码")
     type = Column(String(20), default="button", nullable=False, comment="权限类型：menu=菜单，button=按钮")

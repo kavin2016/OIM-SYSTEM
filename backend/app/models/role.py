@@ -7,7 +7,7 @@ from ..database import Base
 
 
 class Role(Base):
-    __tablename__ = "roles"
+    __tablename__ = "sys_roles"
 
     id = Column(Integer, primary_key=True, index=True, comment="角色ID")
     name = Column(String(100), unique=True, index=True, nullable=False, comment="角色名称")

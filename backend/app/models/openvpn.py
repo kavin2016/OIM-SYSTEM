@@ -63,7 +63,7 @@ class OpenVpnAccount(Base):
     __tablename__ = "openvpn_accounts"
 
     id = Column(Integer, primary_key=True, index=True, comment="OpenVPN账号ID")
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False, comment="用户ID")
+    user_id = Column(Integer, ForeignKey("sys_users.id", ondelete="CASCADE"), unique=True, nullable=False, comment="用户ID")
     server_id = Column(Integer, ForeignKey("openvpn_servers.id", ondelete="SET NULL"), nullable=True, comment="服务器ID")
     vpn_username = Column(String(64), unique=True, index=True, nullable=False, comment="VPN用户名")
     status = Column(String(32), default="pending", nullable=False, comment="状态")
@@ -113,7 +113,7 @@ class OpenVpnSession(Base):
     id = Column(Integer, primary_key=True, index=True, comment="OpenVPN会话ID")
     server_id = Column(Integer, ForeignKey("openvpn_servers.id", ondelete="CASCADE"), nullable=False, comment="服务器ID")
     account_id = Column(Integer, ForeignKey("openvpn_accounts.id", ondelete="CASCADE"), nullable=True, comment="账号ID")
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, comment="用户ID")
+    user_id = Column(Integer, ForeignKey("sys_users.id", ondelete="SET NULL"), nullable=True, comment="用户ID")
     common_name = Column(String(128), nullable=False, comment="OpenVPN CN")
     virtual_ip = Column(String(64), nullable=True, comment="VPN IP")
     real_ip = Column(String(64), nullable=True, comment="公网IP")
@@ -130,7 +130,7 @@ class OpenVpnConnectionLog(Base):
     id = Column(Integer, primary_key=True, index=True, comment="OpenVPN连接日志ID")
     server_id = Column(Integer, ForeignKey("openvpn_servers.id", ondelete="SET NULL"), nullable=True, comment="服务器ID")
     account_id = Column(Integer, ForeignKey("openvpn_accounts.id", ondelete="SET NULL"), nullable=True, comment="账号ID")
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, comment="用户ID")
+    user_id = Column(Integer, ForeignKey("sys_users.id", ondelete="SET NULL"), nullable=True, comment="用户ID")
     action = Column(String(32), nullable=False, comment="动作")
     real_ip = Column(String(64), nullable=True, comment="公网IP")
     virtual_ip = Column(String(64), nullable=True, comment="VPN IP")

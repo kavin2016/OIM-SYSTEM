@@ -16,6 +16,9 @@ function requestPath(path, params = {}) {
 }
 
 export const openvpnAPI = {
+  listOptions(token) {
+    return authRequest('/openvpn/options', { token })
+  },
   listServers(token, params = {}) {
     return authRequest(requestPath('/openvpn/servers', params), { token })
   },
@@ -77,6 +80,9 @@ export const openvpnAPI = {
   },
   listLogs(token, params = {}) {
     return authRequest(requestPath('/openvpn/logs', params), { token })
+  },
+  exportLogs(token, params = {}) {
+    return authRequest(requestPath('/openvpn/logs/export', params), { token })
   },
   listRules(token, params = {}) {
     return authRequest(requestPath('/openvpn/assignment-rules', params), { token })

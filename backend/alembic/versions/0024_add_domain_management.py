@@ -37,6 +37,43 @@ def _permission_id(bind, code):
     return bind.execute(sa.text("SELECT id FROM permissions WHERE code = :code"), {"code": code}).scalar()
 
 
+def _table_exists(bind, table_name):
+    return bool(
+        bind.execute(
+            sa.text(
+                """
+                SELECT 1
+                FROM INFORMATION_SCHEMA.TABLES
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table_name
+                """
+            ),
+            {"table_name": table_name},
+        ).scalar()
+    )
+
+
+def _index_exists(bind, table_name, index_name):
+    return bool(
+        bind.execute(
+            sa.text(
+                """
+                SELECT 1
+                FROM INFORMATION_SCHEMA.STATISTICS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = :table_name
+                  AND INDEX_NAME = :index_name
+                """
+            ),
+            {"table_name": table_name, "index_name": index_name},
+        ).scalar()
+    )
+
+
+def _create_index_if_missing(bind, index_name, table_name, columns):
+    if not _index_exists(bind, table_name, index_name):
+        op.create_index(index_name, table_name, columns)
+
+
 def _upsert_permission(bind, item, parent_id=None):
     existing_id = _permission_id(bind, item["code"])
     values = {
@@ -140,39 +177,40 @@ def _grant_to_admin_role(bind, codes):
 
 
 def upgrade():
-    op.create_table(
-        "domains",
-        sa.Column("id", sa.Integer(), primary_key=True, nullable=False, comment="域名ID"),
-        sa.Column("code", sa.String(length=255), nullable=False, comment="域名地址"),
-        sa.Column("name", sa.String(length=100), nullable=False, comment="域名名称"),
-        sa.Column("registrar", sa.String(length=100), nullable=True, comment="注册商"),
-        sa.Column("expiry_date", sa.Date(), nullable=True, comment="到期日期"),
-        sa.Column("sort_order", sa.Integer(), nullable=False, server_default=sa.text("0"), comment="显示顺序"),
-        sa.Column("status", sa.Integer(), nullable=False, server_default=sa.text("0"), comment="状态：0=正常，1=停用"),
-        sa.Column("is_deleted", sa.Boolean(), nullable=False, server_default=sa.text("0"), comment="是否删除：0=未删除，1=已删除"),
-        sa.Column("created_by", sa.Integer(), nullable=True, comment="创建者"),
-        sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP"), comment="创建时间"),
-        sa.Column("updated_by", sa.Integer(), nullable=True, comment="更新者"),
-        sa.Column(
-            "updated_at",
-            sa.DateTime(),
-            nullable=False,
-            server_default=sa.text("CURRENT_TIMESTAMP"),
-            comment="更新时间",
-        ),
-        sa.Column("remark", sa.Text(), nullable=True, comment="备注"),
-        sa.UniqueConstraint("code", name="uq_domains_code"),
-        sa.UniqueConstraint("name", name="uq_domains_name"),
-    )
-    op.create_index("ix_domains_id", "domains", ["id"])
-    op.create_index("ix_domains_code", "domains", ["code"])
-    op.create_index("ix_domains_name", "domains", ["name"])
-    op.create_index("ix_domains_status", "domains", ["status"])
-    op.create_index("ix_domains_is_deleted", "domains", ["is_deleted"])
-    op.create_index("ix_domains_sort_order", "domains", ["sort_order"])
-    op.create_index("ix_domains_expiry_date", "domains", ["expiry_date"])
-
     bind = op.get_bind()
+    if not _table_exists(bind, "domains"):
+        op.create_table(
+            "domains",
+            sa.Column("id", sa.Integer(), primary_key=True, nullable=False, comment="域名ID"),
+            sa.Column("code", sa.String(length=255), nullable=False, comment="域名地址"),
+            sa.Column("name", sa.String(length=100), nullable=False, comment="域名名称"),
+            sa.Column("registrar", sa.String(length=100), nullable=True, comment="注册商"),
+            sa.Column("expiry_date", sa.Date(), nullable=True, comment="到期日期"),
+            sa.Column("sort_order", sa.Integer(), nullable=False, server_default=sa.text("0"), comment="显示顺序"),
+            sa.Column("status", sa.Integer(), nullable=False, server_default=sa.text("0"), comment="状态：0=正常，1=停用"),
+            sa.Column("is_deleted", sa.Boolean(), nullable=False, server_default=sa.text("0"), comment="是否删除：0=未删除，1=已删除"),
+            sa.Column("created_by", sa.Integer(), nullable=True, comment="创建者"),
+            sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP"), comment="创建时间"),
+            sa.Column("updated_by", sa.Integer(), nullable=True, comment="更新者"),
+            sa.Column(
+                "updated_at",
+                sa.DateTime(),
+                nullable=False,
+                server_default=sa.text("CURRENT_TIMESTAMP"),
+                comment="更新时间",
+            ),
+            sa.Column("remark", sa.Text(), nullable=True, comment="备注"),
+            sa.UniqueConstraint("code", name="uq_domains_code"),
+            sa.UniqueConstraint("name", name="uq_domains_name"),
+        )
+    _create_index_if_missing(bind, "ix_domains_id", "domains", ["id"])
+    _create_index_if_missing(bind, "ix_domains_code", "domains", ["code"])
+    _create_index_if_missing(bind, "ix_domains_name", "domains", ["name"])
+    _create_index_if_missing(bind, "ix_domains_status", "domains", ["status"])
+    _create_index_if_missing(bind, "ix_domains_is_deleted", "domains", ["is_deleted"])
+    _create_index_if_missing(bind, "ix_domains_sort_order", "domains", ["sort_order"])
+    _create_index_if_missing(bind, "ix_domains_expiry_date", "domains", ["expiry_date"])
+
     system_parent_id = _permission_id(bind, "system:settings")
     all_codes = []
     for permission in DOMAIN_PERMISSIONS:

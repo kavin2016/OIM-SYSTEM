@@ -48,6 +48,9 @@ export async function request(path, options = {}) {
   }
   try {
     const { globalLoading, ...fetchOptions } = options
+    if (fetchOptions.body && (!fetchOptions.method || fetchOptions.method.toUpperCase() === 'GET')) {
+      fetchOptions.method = 'POST'
+    }
     const response = await fetch(buildUrl(path), fetchOptions)
     return await handleResponse(response)
   } finally {

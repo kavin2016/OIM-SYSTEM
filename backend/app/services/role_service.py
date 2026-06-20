@@ -130,14 +130,21 @@ class RoleService(NamedCodeService):
 
     def list_permissions(self, role_id: int) -> List[Permission]:
         self.get_required(role_id)
-        return (
+        checked_permission_ids = {
+            item.permission_id
+            for item in self.db.query(RolePermission.permission_id)
+            .filter(RolePermission.role_id == role_id)
+            .all()
+        }
+        permissions = (
             self.db.query(Permission)
-            .join(RolePermission, RolePermission.permission_id == Permission.id)
             .filter(
-                RolePermission.role_id == role_id,
                 Permission.is_active.is_(True),
                 Permission.is_deleted.is_(False),
             )
             .order_by(Permission.sort_order.asc(), Permission.id.asc())
             .all()
         )
+        for permission in permissions:
+            permission.checked = permission.id in checked_permission_ids
+        return permissions
