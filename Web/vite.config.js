@@ -15,6 +15,7 @@ export default defineConfig({
       '/domains': 'http://localhost:8000',
       '/permissions': 'http://localhost:8000',
       '/attendance': 'http://localhost:8000',
+      '/openvpn': 'http://localhost:8000',
       '/ping': 'http://localhost:8000',
       '/health': 'http://localhost:8000',
     },

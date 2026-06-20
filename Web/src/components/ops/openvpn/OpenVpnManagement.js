@@ -7,8 +7,7 @@ import { actionIconMap } from '../../system/resourcePageConstants.js'
 
 const tabs = [
   { key: 'servers', label: '服务器管理', permission: 'ops:openvpn:server:query' },
-  { key: 'accounts', label: '账号管理', permission: 'ops:openvpn:account:query' },
-  { key: 'certificates', label: '证书管理', permission: 'ops:openvpn:cert:query' },
+  { key: 'accounts', label: '用户管理', permission: 'ops:openvpn:account:query' },
   { key: 'sessions', label: '在线会话', permission: 'ops:openvpn:session:query' },
   { key: 'logs', label: '连接日志', permission: 'ops:openvpn:log:query' },
   { key: 'rules', label: '分配策略', permission: 'ops:openvpn:rule:query' },
@@ -22,14 +21,11 @@ function emptyServerForm() {
     host: '',
     port: 1194,
     protocol: 'udp',
-    management_host: '',
-    management_port: '',
     max_clients: 0,
     current_clients: 0,
     status: 'disabled',
     is_default: false,
     is_active: true,
-    config_template: '',
     remark: '',
   }
 }
@@ -51,7 +47,50 @@ function asArray(value) {
   return Array.isArray(value) ? value : []
 }
 
+const EnableUserTreeNode = {
+  name: 'EnableUserTreeNode',
+  props: {
+    node: { type: Object, required: true },
+    level: { type: Number, default: 0 },
+    selectedId: { type: [Number, String], default: '' },
+  },
+  emits: ['select'],
+  computed: {
+    isUser() {
+      return this.node.type === 'user'
+    },
+    isSelected() {
+      return this.isUser && Number(this.selectedId) === Number(this.node.id)
+    },
+  },
+  template: `
+    <div class="vpn-user-tree-node">
+      <button
+        type="button"
+        class="vpn-user-tree-item"
+        :class="{ department: !isUser, user: isUser, selected: isSelected }"
+        :style="{ paddingLeft: (12 + level * 16) + 'px' }"
+        @click="$emit('select', node)"
+      >
+        <span class="vpn-user-tree-marker">{{ isUser ? '•' : '▸' }}</span>
+        <span class="vpn-user-tree-text">{{ node.label }}</span>
+      </button>
+      <EnableUserTreeNode
+        v-for="child in node.children"
+        :key="child.key"
+        :node="child"
+        :level="level + 1"
+        :selected-id="selectedId"
+        @select="$emit('select', $event)"
+      />
+    </div>
+  `,
+}
+
 export default {
+  components: {
+    EnableUserTreeNode,
+  },
   setup() {
     const activeTab = ref('servers')
     const loading = ref(false)
@@ -75,6 +114,8 @@ export default {
     const serverQuery = reactive({ name: '', code: '', status: '', region: '', include_disabled: true })
     const ruleQuery = reactive({ target_type: '', server_id: '' })
     const enableLayer = reactive({ visible: false, user_id: '', server_id: '', vpn_username: '', remark: '' })
+    const enableUserKeyword = ref('')
+    const enableUserDropdownVisible = ref(false)
     const assignLayer = reactive({ visible: false, account_id: null, server_id: '' })
     const selectedRowIds = ref([])
 
@@ -84,7 +125,6 @@ export default {
       const map = {
         servers: servers.value,
         accounts: accounts.value,
-        certificates: certificates.value,
         sessions: sessions.value,
         logs: logs.value,
         rules: rules.value,
@@ -112,6 +152,7 @@ export default {
       if (ruleForm.target_type === 'position') return asArray(positions.value).map((item) => ({ id: item.id, name: item.name }))
       return asArray(departments.value).map((item) => ({ id: item.id, name: item.name }))
     })
+    const enableUserTree = computed(() => buildEnableUserTree())
 
     function formatDate(value) {
       if (!value) return '-'
@@ -140,6 +181,96 @@ export default {
     function resetReactive(target, source) {
       Object.keys(target).forEach((key) => delete target[key])
       Object.assign(target, source)
+    }
+
+    function userLabel(user) {
+      return `${user.username}${user.nickname ? ` / ${user.nickname}` : ''}`
+    }
+
+    function buildEnableUserTree() {
+      const keyword = enableUserKeyword.value.trim().toLowerCase()
+      const departmentMap = new Map(
+        asArray(departments.value).map((department) => [
+          department.id,
+          {
+            key: `department-${department.id}`,
+            type: 'department',
+            id: department.id,
+            parentId: department.parent_id || null,
+            label: `${department.name}${department.code ? `（${department.code}）` : ''}`,
+            children: [],
+          },
+        ]),
+      )
+      const roots = []
+      departmentMap.forEach((department) => {
+        const parent = departmentMap.get(department.parentId)
+        if (parent) parent.children.push(department)
+        else roots.push(department)
+      })
+
+      const unassigned = {
+        key: 'department-unassigned',
+        type: 'department',
+        id: null,
+        parentId: null,
+        label: '未分配部门',
+        children: [],
+      }
+
+      asArray(users.value).forEach((user) => {
+        const label = userLabel(user)
+        const searchable = `${label} ${user.username || ''} ${user.nickname || ''}`.toLowerCase()
+        if (keyword && !searchable.includes(keyword)) return
+        const node = {
+          key: `user-${user.id}`,
+          type: 'user',
+          id: user.id,
+          label,
+          children: [],
+        }
+        const departmentId = asArray(user.department_ids)[0]
+        const department = departmentMap.get(departmentId)
+        if (department) department.children.push(node)
+        else unassigned.children.push(node)
+      })
+
+      if (unassigned.children.length > 0) roots.push(unassigned)
+      return pruneEmptyDepartments(roots)
+    }
+
+    function pruneEmptyDepartments(nodes) {
+      return nodes
+        .map((node) => {
+          if (node.type === 'user') return node
+          const children = pruneEmptyDepartments(node.children || [])
+          return children.length > 0 ? { ...node, children } : null
+        })
+        .filter(Boolean)
+    }
+
+    function selectEnableUser(node) {
+      if (node.type !== 'user' || node.children?.length) {
+        ElMessage.warning('请选择最后一级用户节点')
+        return
+      }
+      enableLayer.user_id = node.id
+      enableLayer.vpn_username = users.value.find((item) => item.id === node.id)?.username || ''
+      enableUserKeyword.value = node.label
+      enableUserDropdownVisible.value = false
+    }
+
+    function isEnableUserSelected(node) {
+      return node.type === 'user' && Number(enableLayer.user_id) === Number(node.id)
+    }
+
+    function openEnableUserDropdown() {
+      enableUserDropdownVisible.value = true
+    }
+
+    function closeEnableUserDropdown(event) {
+      if (event.currentTarget.contains(event.relatedTarget)) return
+      enableUserDropdownVisible.value = false
     }
 
     async function loadServers() {
@@ -179,7 +310,6 @@ export default {
       try {
         if (activeTab.value === 'servers') await loadServers()
         if (activeTab.value === 'accounts') await loadAccounts()
-        if (activeTab.value === 'certificates') await loadCertificates()
         if (activeTab.value === 'sessions') await loadSessions()
         if (activeTab.value === 'logs') await loadLogs()
         if (activeTab.value === 'rules') await loadRules()
@@ -252,11 +382,6 @@ export default {
       if (row) await setDefaultServer(row)
     }
 
-    async function testSelectedServer() {
-      const row = requireSingleSelection('测试')
-      if (row) await testServer(row)
-    }
-
     function assignSelectedAccountServer() {
       const row = requireSingleSelection('分配服务器')
       if (row) openAssignServer(row)
@@ -284,12 +409,12 @@ export default {
 
     async function renewSelectedCertificate() {
       const row = requireSingleSelection('续期')
-      if (row) await renewCertificate(row)
+      if (row) await renewAccountCertificate(row)
     }
 
     async function revokeSelectedCertificate() {
       const row = requireSingleSelection('吊销')
-      if (row) await revokeCertificate(row)
+      if (row) await revokeAccountCertificate(row)
     }
 
     async function kickSelectedSession() {
@@ -323,8 +448,6 @@ export default {
       resetReactive(serverForm, {
         ...emptyServerForm(),
         ...row,
-        management_port: row.management_port || '',
-        config_template: row.config_template || '',
         remark: row.remark || '',
       })
       serverDialogVisible.value = true
@@ -334,7 +457,6 @@ export default {
       const payload = {
         ...serverForm,
         port: Number(serverForm.port) || 1194,
-        management_port: serverForm.management_port ? Number(serverForm.management_port) : null,
         max_clients: Number(serverForm.max_clients) || 0,
         current_clients: Number(serverForm.current_clients) || 0,
       }
@@ -361,13 +483,15 @@ export default {
       await loadServers()
     }
 
-    async function testServer(row) {
-      const result = await openvpnAPI.testServer(token.value, row.id)
-      ElMessage[result.ok ? 'success' : 'warning'](result.message)
-    }
-
-    function openEnableAccount() {
+    async function openEnableAccount() {
       Object.assign(enableLayer, { visible: true, user_id: '', server_id: '', vpn_username: '', remark: '' })
+      enableUserKeyword.value = ''
+      enableUserDropdownVisible.value = false
+      try {
+        await loadOptions()
+      } catch (error) {
+        ElMessage.error(error.message || '用户数据加载失败')
+      }
     }
 
     async function enableAccount() {
@@ -378,7 +502,7 @@ export default {
       })
       enableLayer.visible = false
       ElMessage.success('VPN账号已开通')
-      await loadAccounts()
+      await Promise.all([loadAccounts(), loadOptions()])
     }
 
     async function disableAccount(row) {
@@ -405,17 +529,25 @@ export default {
       await Promise.all([loadAccounts(), loadCertificates()])
     }
 
-    async function revokeCertificate(row) {
-      await ElMessageBox.confirm(`确认吊销证书 ${row.serial_number}？`, '吊销确认', { type: 'warning' })
-      await openvpnAPI.revokeCertificate(token.value, row.id, '管理员手动吊销')
+    async function revokeAccountCertificate(row) {
+      if (!row.certificate_id) {
+        ElMessage.warning('该用户没有可吊销的证书')
+        return
+      }
+      await ElMessageBox.confirm(`确认吊销 ${row.username} 的OpenVPN证书？`, '吊销确认', { type: 'warning' })
+      await openvpnAPI.revokeCertificate(token.value, row.certificate_id, '管理员手动吊销')
       ElMessage.success('证书已吊销')
-      await loadCertificates()
+      await Promise.all([loadAccounts(), loadCertificates()])
     }
 
-    async function renewCertificate(row) {
-      await openvpnAPI.renewCertificate(token.value, row.id, { valid_days: 365 })
+    async function renewAccountCertificate(row) {
+      if (!row.certificate_id) {
+        ElMessage.warning('该用户没有可续期的证书')
+        return
+      }
+      await openvpnAPI.renewCertificate(token.value, row.certificate_id, { valid_days: 365 })
       ElMessage.success('证书已续期')
-      await loadCertificates()
+      await Promise.all([loadAccounts(), loadCertificates()])
     }
 
     async function downloadConfig(row) {
@@ -514,11 +646,15 @@ export default {
       editSelectedServer,
       enableAccount,
       enableLayer,
+      enableUserKeyword,
+      enableUserDropdownVisible,
+      enableUserTree,
       exportLogs,
       formatDate,
       issueCertificate,
       issueSelectedAccountCertificate,
       isAllRowsSelected,
+      isEnableUserSelected,
       kickSession,
       kickSelectedSession,
       loadAccounts,
@@ -530,14 +666,15 @@ export default {
       openAssignServer,
       openCreateRule,
       openCreateServer,
+      openEnableUserDropdown,
       openEditRule,
       openEditServer,
       openEnableAccount,
       positions,
-      renewCertificate,
+      renewAccountCertificate,
       renewSelectedCertificate,
       resetQuery,
-      revokeCertificate,
+      revokeAccountCertificate,
       revokeSelectedCertificate,
       roleOptions: roles,
       ruleDialogVisible,
@@ -552,6 +689,8 @@ export default {
       serverDialogVisible,
       serverForm,
       serverName,
+      selectEnableUser,
+      closeEnableUserDropdown,
       serverQuery,
       servers,
       sessions,
@@ -560,8 +699,6 @@ export default {
       statusText,
       switchTab,
       targetOptions,
-      testServer,
-      testSelectedServer,
       toggleAllRows,
       toggleRowSelection,
       users,

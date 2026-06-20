@@ -36,7 +36,9 @@ def _account_read(account: OpenVpnAccount) -> OpenVpnAccountRead:
         username=account.user.username if account.user else None,
         nickname=account.user.nickname if account.user else None,
         server_name=account.server.name if account.server else None,
+        certificate_id=latest_cert.id if latest_cert else None,
         certificate_status=latest_cert.status if latest_cert else None,
+        certificate_serial_number=latest_cert.serial_number if latest_cert else None,
         certificate_expires_at=latest_cert.expires_at if latest_cert else None,
     )
 
@@ -86,7 +88,7 @@ def list_servers(
 @router.get("/options")
 def list_openvpn_options(
     openvpn_service: OpenVpnServiceDep,
-    current_user=Depends(require_permission("ops:openvpn:list")),
+    current_user=Depends(require_permission("ops:openvpn:account:query")),
 ):
     return openvpn_service.list_options()
 

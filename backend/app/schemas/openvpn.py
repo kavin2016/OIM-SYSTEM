@@ -9,6 +9,7 @@ ACCOUNT_STATUSES = {"pending", "enabled", "disabled", "revoked"}
 CERTIFICATE_STATUSES = {"issued", "expired", "revoked"}
 TARGET_TYPES = {"user", "department", "role", "position"}
 PROTOCOLS = {"udp", "tcp"}
+CERTIFICATE_BACKENDS = {"metadata", "local_easyrsa"}
 
 
 class OpenVpnServerBase(BaseModel):
@@ -18,13 +19,10 @@ class OpenVpnServerBase(BaseModel):
     host: str
     port: int = Field(default=1194, ge=1, le=65535)
     protocol: str = "udp"
-    management_host: Optional[str] = None
-    management_port: Optional[int] = Field(default=None, ge=1, le=65535)
     max_clients: int = Field(default=0, ge=0)
     current_clients: int = Field(default=0, ge=0)
     status: str = "disabled"
     is_default: bool = False
-    config_template: Optional[str] = None
     remark: Optional[str] = None
     is_active: bool = True
 
@@ -44,7 +42,27 @@ class OpenVpnServerBase(BaseModel):
         raise ValueError("服务器状态不合法")
 
 
-class OpenVpnServerCreate(OpenVpnServerBase):
+class OpenVpnServerSecretMixin(BaseModel):
+    management_host: Optional[str] = None
+    management_port: Optional[int] = Field(default=None, ge=1, le=65535)
+    certificate_backend: str = "metadata"
+    easy_rsa_dir: Optional[str] = None
+    pki_dir: Optional[str] = None
+    ca_cert_path: Optional[str] = None
+    tls_crypt_key_path: Optional[str] = None
+    crl_path: Optional[str] = None
+    client_config_dir: Optional[str] = None
+    config_template: Optional[str] = None
+
+    @field_validator("certificate_backend")
+    @classmethod
+    def validate_certificate_backend(cls, value):
+        if value in CERTIFICATE_BACKENDS:
+            return value
+        raise ValueError("证书后端只能是 metadata 或 local_easyrsa")
+
+
+class OpenVpnServerCreate(OpenVpnServerBase, OpenVpnServerSecretMixin):
     pass
 
 
@@ -61,6 +79,13 @@ class OpenVpnServerUpdate(BaseModel):
     current_clients: Optional[int] = Field(default=None, ge=0)
     status: Optional[str] = None
     is_default: Optional[bool] = None
+    certificate_backend: Optional[str] = None
+    easy_rsa_dir: Optional[str] = None
+    pki_dir: Optional[str] = None
+    ca_cert_path: Optional[str] = None
+    tls_crypt_key_path: Optional[str] = None
+    crl_path: Optional[str] = None
+    client_config_dir: Optional[str] = None
     config_template: Optional[str] = None
     remark: Optional[str] = None
     is_active: Optional[bool] = None
@@ -82,6 +107,13 @@ class OpenVpnServerUpdate(BaseModel):
         if value is None or value in SERVER_STATUSES:
             return value
         raise ValueError("服务器状态不合法")
+
+    @field_validator("certificate_backend")
+    @classmethod
+    def validate_certificate_backend(cls, value):
+        if value is None or value in CERTIFICATE_BACKENDS:
+            return value
+        raise ValueError("证书后端只能是 metadata 或 local_easyrsa")
 
 
 class OpenVpnServerRead(OpenVpnServerBase):
@@ -166,7 +198,9 @@ class OpenVpnAccountRead(BaseModel):
     username: Optional[str] = None
     nickname: Optional[str] = None
     server_name: Optional[str] = None
+    certificate_id: Optional[int] = None
     certificate_status: Optional[str] = None
+    certificate_serial_number: Optional[str] = None
     certificate_expires_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
@@ -194,6 +228,9 @@ class OpenVpnCertificateRead(BaseModel):
     expires_at: datetime
     revoked_at: Optional[datetime] = None
     revoked_reason: Optional[str] = None
+    cert_path: Optional[str] = None
+    key_path: Optional[str] = None
+    request_path: Optional[str] = None
     config_file_path: Optional[str] = None
     created_by: Optional[int] = None
     created_at: datetime

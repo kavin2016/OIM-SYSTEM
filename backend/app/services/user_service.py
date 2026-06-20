@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from passlib.context import CryptContext
+import bcrypt
 from sqlalchemy.orm import Session
 
 from ..models.department import Department
@@ -17,7 +17,7 @@ from ..models.user_role import UserRole
 from ..schemas.user import UserAdminCreate, UserAdminUpdate, UserCreate, UserUpdate
 from .base_service import BaseService, ConflictError
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+BCRYPT_MAX_PASSWORD_BYTES = 72
 
 
 class UserService(BaseService[User]):
@@ -30,11 +30,18 @@ class UserService(BaseService[User]):
 
     @staticmethod
     def hash_password(password: str) -> str:
-        return pwd_context.hash(password)
+        password_bytes = password.encode("utf-8")[:BCRYPT_MAX_PASSWORD_BYTES]
+        return bcrypt.hashpw(password_bytes, bcrypt.gensalt()).decode("utf-8")
 
     @staticmethod
     def verify_password(password: str, hashed_password: str) -> bool:
-        return pwd_context.verify(password, hashed_password)
+        if not hashed_password:
+            return False
+        password_bytes = password.encode("utf-8")[:BCRYPT_MAX_PASSWORD_BYTES]
+        try:
+            return bcrypt.checkpw(password_bytes, hashed_password.encode("utf-8"))
+        except ValueError:
+            return False
 
     @staticmethod
     def normalize_contacts(contacts: Optional[list[str]]) -> list[str]:

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
+import re
+import shutil
+import subprocess
 from typing import Optional
 from uuid import uuid4
 
@@ -102,6 +106,20 @@ class OpenVpnService(BaseService[OpenVpnServer]):
 
     def test_server(self, server_id: int) -> dict:
         server = self.get_server_required(server_id)
+        if server.certificate_backend == "local_easyrsa":
+            if not server.easy_rsa_dir:
+                return {"ok": False, "message": "未配置Easy-RSA目录"}
+            easy_rsa_dir = Path(server.easy_rsa_dir).expanduser()
+            executable = easy_rsa_dir / "easyrsa"
+            if not executable.exists():
+                return {"ok": False, "message": f"Easy-RSA执行文件不存在：{executable}"}
+            pki_dir = self._server_pki_dir(server)
+            ca_path = Path(server.ca_cert_path).expanduser() if server.ca_cert_path else pki_dir / "ca.crt"
+            if not pki_dir.exists():
+                return {"ok": False, "message": f"PKI目录不存在：{pki_dir}"}
+            if not ca_path.exists():
+                return {"ok": False, "message": f"CA证书不存在：{ca_path}"}
+            return {"ok": True, "message": "Easy-RSA证书后端配置可用"}
         return {
             "ok": server.is_active and server.status != "disabled",
             "message": "服务器配置可用，真实连通性测试请接入 OpenVPN management interface",
@@ -264,13 +282,29 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         if not account.server_id:
             raise ConflictError("OpenVPN账号未分配服务器")
         server = self.get_server_required(account.server_id)
+        existing = (
+            self.db.query(OpenVpnCertificate)
+            .filter(
+                OpenVpnCertificate.account_id == account.id,
+                OpenVpnCertificate.server_id == server.id,
+                OpenVpnCertificate.status == "issued",
+            )
+            .first()
+        )
+        if existing:
+            raise ConflictError("该账号已有有效OpenVPN证书，请使用续期或先吊销")
+        cert_info = self._issue_certificate_files(server, account.vpn_username, expires_at)
+        cert_info = self._archive_certificate_files(server, account, cert_info)
         certificate = OpenVpnCertificate(
             account_id=account.id,
             server_id=server.id,
             common_name=account.vpn_username,
-            serial_number=uuid4().hex,
+            serial_number=cert_info["serial_number"],
             status="issued",
             expires_at=expires_at,
+            cert_path=cert_info.get("cert_path"),
+            key_path=cert_info.get("key_path"),
+            request_path=cert_info.get("request_path"),
             created_by=actor_id,
         )
         account.config_version += 1
@@ -280,6 +314,10 @@ class OpenVpnService(BaseService[OpenVpnServer]):
 
     def revoke_certificate(self, certificate_id: int, reason: Optional[str], actor_id: int) -> OpenVpnCertificate:
         certificate = self.get_certificate_required(certificate_id)
+        if certificate.status == "revoked":
+            return certificate
+        server = self.get_server_required(certificate.server_id)
+        self._revoke_certificate_files(server, certificate.common_name)
         certificate.status = "revoked"
         certificate.revoked_at = datetime.utcnow()
         certificate.revoked_reason = reason
@@ -293,17 +331,23 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         old_certificate = self.get_certificate_required(certificate_id)
         if old_certificate.status == "revoked":
             raise ConflictError("已吊销证书不能续期")
+        server = self.get_server_required(old_certificate.server_id)
         old_certificate.status = "expired"
+        account = self.get_account_required(old_certificate.account_id)
+        cert_info = self._renew_certificate_files(server, old_certificate.common_name, expires_at)
+        cert_info = self._archive_certificate_files(server, account, cert_info)
         new_certificate = OpenVpnCertificate(
             account_id=old_certificate.account_id,
             server_id=old_certificate.server_id,
             common_name=old_certificate.common_name,
-            serial_number=uuid4().hex,
+            serial_number=cert_info["serial_number"],
             status="issued",
             expires_at=expires_at,
+            cert_path=cert_info.get("cert_path"),
+            key_path=cert_info.get("key_path"),
+            request_path=cert_info.get("request_path"),
             created_by=actor_id,
         )
-        account = self.get_account_required(old_certificate.account_id)
         account.config_version += 1
         account.updated_by = actor_id
         self.db.add(old_certificate)
@@ -352,19 +396,19 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         )
         if not certificate:
             raise ConflictError("请先签发OpenVPN证书")
-        template = server.config_template or self._default_config_template()
-        content = template.format(
-            host=server.host,
-            port=server.port,
-            protocol=server.protocol,
-            common_name=certificate.common_name,
-            serial_number=certificate.serial_number,
-        )
+        content = self._render_client_config(server, certificate)
         account.last_config_generated_at = datetime.utcnow()
         account.config_version += 1
         account.updated_by = actor_id
+        filename = f"{self._account_certificate_basename(server, account)}.ovpn"
+        if server.client_config_dir:
+            config_path = self._account_certificate_dir(server, account) / filename
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(content, encoding="utf-8")
+            certificate.config_file_path = str(config_path)
+            self.db.add(certificate)
         self.commit(account, "OpenVPN配置生成失败")
-        return f"{account.vpn_username}-{server.code}.ovpn", content
+        return filename, content
 
     def list_sessions(
         self,
@@ -423,7 +467,11 @@ class OpenVpnService(BaseService[OpenVpnServer]):
     def list_options(self) -> dict:
         users = (
             self.db.query(User)
-            .filter(User.is_deleted.is_(False))
+            .filter(
+                User.is_deleted.is_(False),
+                User.is_active.is_(True),
+                ~User.id.in_(self.db.query(OpenVpnAccount.user_id)),
+            )
             .order_by(User.id.desc())
             .limit(1000)
             .all()
@@ -449,9 +497,21 @@ class OpenVpnService(BaseService[OpenVpnServer]):
             .limit(1000)
             .all()
         )
+        user_department_rows = self.db.query(UserDepartment.user_id, UserDepartment.department_id).all()
+        user_department_map = {}
+        for user_id, department_id in user_department_rows:
+            user_department_map.setdefault(user_id, []).append(department_id)
         return {
-            "users": [{"id": item.id, "username": item.username, "nickname": item.nickname} for item in users],
-            "departments": [{"id": item.id, "name": item.name} for item in departments],
+            "users": [
+                {
+                    "id": item.id,
+                    "username": item.username,
+                    "nickname": item.nickname,
+                    "department_ids": user_department_map.get(item.id, []),
+                }
+                for item in users
+            ],
+            "departments": [{"id": item.id, "name": item.name, "code": item.code, "parent_id": item.parent_id} for item in departments],
             "roles": [{"id": item.id, "name": item.name} for item in roles],
             "positions": [{"id": item.id, "name": item.name} for item in positions],
         }
@@ -587,6 +647,214 @@ class OpenVpnService(BaseService[OpenVpnServer]):
                 )
             )
 
+    def _issue_certificate_files(
+        self,
+        server: OpenVpnServer,
+        common_name: str,
+        expires_at: datetime,
+        allow_existing: bool = True,
+    ) -> dict:
+        if server.certificate_backend != "local_easyrsa":
+            return {"serial_number": uuid4().hex}
+
+        self._validate_common_name(common_name)
+        pki_dir = self._server_pki_dir(server)
+        cert_path = pki_dir / "issued" / f"{common_name}.crt"
+        key_path = pki_dir / "private" / f"{common_name}.key"
+        request_path = pki_dir / "reqs" / f"{common_name}.req"
+
+        if not (allow_existing and cert_path.exists() and key_path.exists()):
+            valid_days = max(1, (expires_at - datetime.utcnow()).days)
+            env = {"EASYRSA_CERT_EXPIRE": str(valid_days)}
+            self._run_easyrsa(server, ["build-client-full", common_name, "nopass"], env=env)
+
+        if not cert_path.exists() or not key_path.exists():
+            raise ConflictError("Easy-RSA签发完成后未找到客户端证书或私钥")
+
+        return {
+            "serial_number": self._extract_certificate_serial(cert_path),
+            "cert_path": str(cert_path),
+            "key_path": str(key_path),
+            "request_path": str(request_path) if request_path.exists() else None,
+        }
+
+    def _revoke_certificate_files(self, server: OpenVpnServer, common_name: str) -> None:
+        if server.certificate_backend != "local_easyrsa":
+            return
+        self._validate_common_name(common_name)
+        self._run_easyrsa(server, ["revoke", common_name])
+        self._run_easyrsa(server, ["gen-crl"])
+
+    def _renew_certificate_files(self, server: OpenVpnServer, common_name: str, expires_at: datetime) -> dict:
+        if server.certificate_backend != "local_easyrsa":
+            return {"serial_number": uuid4().hex}
+        self._validate_common_name(common_name)
+        valid_days = max(1, (expires_at - datetime.utcnow()).days)
+        self._run_easyrsa(server, ["renew", common_name, "nopass"], env={"EASYRSA_CERT_EXPIRE": str(valid_days)})
+        pki_dir = self._server_pki_dir(server)
+        cert_path = pki_dir / "issued" / f"{common_name}.crt"
+        key_path = pki_dir / "private" / f"{common_name}.key"
+        request_path = pki_dir / "reqs" / f"{common_name}.req"
+        if not cert_path.exists() or not key_path.exists():
+            raise ConflictError("Easy-RSA续期完成后未找到客户端证书或私钥")
+        return {
+            "serial_number": self._extract_certificate_serial(cert_path),
+            "cert_path": str(cert_path),
+            "key_path": str(key_path),
+            "request_path": str(request_path) if request_path.exists() else None,
+        }
+
+    def _archive_certificate_files(self, server: OpenVpnServer, account: OpenVpnAccount, cert_info: dict) -> dict:
+        if not server.client_config_dir:
+            return cert_info
+
+        target_dir = self._account_certificate_dir(server, account)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        archived_info = dict(cert_info)
+        basename = self._account_certificate_basename(server, account)
+
+        file_map = {
+            "cert_path": f"{basename}.crt",
+            "key_path": f"{basename}.key",
+            "request_path": f"{basename}.req",
+        }
+        for field_name, filename in file_map.items():
+            source = cert_info.get(field_name)
+            if not source:
+                continue
+            source_path = Path(source).expanduser()
+            if not source_path.exists():
+                continue
+            target_path = target_dir / filename
+            shutil.copy2(source_path, target_path)
+            if field_name == "key_path":
+                target_path.chmod(0o600)
+            archived_info[field_name] = str(target_path)
+
+        ca_source = Path(server.ca_cert_path).expanduser() if server.ca_cert_path else self._server_pki_dir(server) / "ca.crt"
+        if ca_source.exists():
+            shutil.copy2(ca_source, target_dir / "ca.crt")
+        if server.tls_crypt_key_path:
+            tls_source = Path(server.tls_crypt_key_path).expanduser()
+            if tls_source.exists():
+                shutil.copy2(tls_source, target_dir / "tls.key")
+
+        return archived_info
+
+    def _account_certificate_dir(self, server: OpenVpnServer, account: OpenVpnAccount) -> Path:
+        if not server.client_config_dir:
+            raise ConflictError("服务器未配置证书文件输出目录")
+        department_segment = self._account_department_segment(account)
+        user_segment = self._safe_path_segment(account.user.username if account.user else account.vpn_username)
+        return Path(server.client_config_dir).expanduser() / department_segment / user_segment
+
+    def _account_department_segment(self, account: OpenVpnAccount) -> str:
+        department = (
+            self.db.query(Department)
+            .join(UserDepartment, UserDepartment.department_id == Department.id)
+            .filter(UserDepartment.user_id == account.user_id, Department.is_deleted.is_(False))
+            .order_by(UserDepartment.is_primary.desc(), Department.id.asc())
+            .first()
+        )
+        return self._safe_path_segment(department.code if department else "未分配部门")
+
+    def _account_certificate_basename(self, server: OpenVpnServer, account: OpenVpnAccount) -> str:
+        department_code = self._account_department_segment(account)
+        username = self._safe_path_segment(account.user.username if account.user else account.vpn_username)
+        server_host = self._safe_path_segment(server.host)
+        return f"{department_code}-{username}-{server_host}"
+
+    @staticmethod
+    def _safe_path_segment(value: str) -> str:
+        value = (value or "").strip() or "未命名"
+        return re.sub(r'[\\/:*?"<>|\s]+', "_", value).strip("._") or "未命名"
+
+    def _run_easyrsa(self, server: OpenVpnServer, args: list[str], env: Optional[dict] = None) -> None:
+        if not server.easy_rsa_dir:
+            raise ConflictError("服务器未配置Easy-RSA目录")
+        easy_rsa_dir = Path(server.easy_rsa_dir).expanduser()
+        executable = easy_rsa_dir / "easyrsa"
+        if not executable.exists():
+            raise ConflictError(f"Easy-RSA执行文件不存在：{executable}")
+        process_env = None
+        if env:
+            import os
+
+            process_env = {**os.environ, **env}
+        result = subprocess.run(
+            [str(executable), "--batch", *args],
+            cwd=str(easy_rsa_dir),
+            env=process_env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        if result.returncode != 0:
+            message = (result.stderr or result.stdout or "Easy-RSA执行失败").strip()
+            raise ConflictError(message[-500:])
+
+    def _server_pki_dir(self, server: OpenVpnServer) -> Path:
+        if server.pki_dir:
+            return Path(server.pki_dir).expanduser()
+        if not server.easy_rsa_dir:
+            raise ConflictError("服务器未配置PKI目录或Easy-RSA目录")
+        return Path(server.easy_rsa_dir).expanduser() / "pki"
+
+    def _render_client_config(self, server: OpenVpnServer, certificate: OpenVpnCertificate) -> str:
+        template = server.config_template or self._default_config_template()
+        values = {
+            "host": server.host,
+            "port": server.port,
+            "protocol": server.protocol,
+            "common_name": certificate.common_name,
+            "serial_number": certificate.serial_number,
+            "ca": "",
+            "cert": "",
+            "key": "",
+            "tls_crypt": "",
+            "tls_crypt_block": "",
+        }
+        if server.certificate_backend == "local_easyrsa":
+            ca_path = Path(server.ca_cert_path).expanduser() if server.ca_cert_path else self._server_pki_dir(server) / "ca.crt"
+            if not certificate.cert_path or not certificate.key_path:
+                raise ConflictError("证书记录缺少客户端证书或私钥路径")
+            values.update(
+                {
+                    "ca": self._read_file(ca_path),
+                    "cert": self._read_file(Path(certificate.cert_path).expanduser()),
+                    "key": self._read_file(Path(certificate.key_path).expanduser()),
+                    "tls_crypt": self._read_file(Path(server.tls_crypt_key_path).expanduser()) if server.tls_crypt_key_path else "",
+                }
+            )
+            if values["tls_crypt"]:
+                values["tls_crypt_block"] = f"<tls-crypt>\n{values['tls_crypt']}\n</tls-crypt>"
+        return template.format(**values)
+
+    @staticmethod
+    def _validate_common_name(common_name: str) -> None:
+        if not re.fullmatch(r"[A-Za-z0-9_.@-]{1,128}", common_name or ""):
+            raise ConflictError("VPN用户名只能包含字母、数字、点、下划线、@和短横线")
+
+    @staticmethod
+    def _read_file(path: Path) -> str:
+        if not path.exists():
+            raise ConflictError(f"文件不存在：{path}")
+        return path.read_text(encoding="utf-8")
+
+    @staticmethod
+    def _extract_certificate_serial(cert_path: Path) -> str:
+        result = subprocess.run(
+            ["openssl", "x509", "-in", str(cert_path), "-noout", "-serial"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if result.returncode == 0 and "serial=" in result.stdout:
+            return result.stdout.strip().split("serial=", 1)[1]
+        return uuid4().hex
+
     @staticmethod
     def _default_config_template() -> str:
         return """client
@@ -600,6 +868,14 @@ persist-tun
 remote-cert-tls server
 verb 3
 
-# common_name: {common_name}
-# certificate_serial: {serial_number}
+<ca>
+{ca}
+</ca>
+<cert>
+{cert}
+</cert>
+<key>
+{key}
+</key>
+{tls_crypt_block}
 """
