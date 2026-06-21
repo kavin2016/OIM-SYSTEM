@@ -1,16 +1,18 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 from typing import Optional
 from uuid import uuid4
 
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from ..config import settings
 from ..models.department import Department
 from ..models.openvpn import (
     OpenVpnAccount,
@@ -19,6 +21,10 @@ from ..models.openvpn import (
     OpenVpnConnectionLog,
     OpenVpnServer,
     OpenVpnSession,
+    OpenVpnTrafficAggregate,
+    OpenVpnTrafficAlert,
+    OpenVpnTrafficRecord,
+    OpenVpnTrafficThresholdRule,
 )
 from ..models.position import Position
 from ..models.role import Role
@@ -31,6 +37,8 @@ from ..schemas.openvpn import (
     OpenVpnAssignmentRuleUpdate,
     OpenVpnServerCreate,
     OpenVpnServerUpdate,
+    OpenVpnTrafficThresholdRuleCreate,
+    OpenVpnTrafficThresholdRuleUpdate,
 )
 from .base_service import BaseService, ConflictError, NotFoundError
 
@@ -69,7 +77,8 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         return query.order_by(OpenVpnServer.is_default.desc(), OpenVpnServer.id.desc()).offset(skip).limit(limit).all()
 
     def create_server(self, payload: OpenVpnServerCreate, actor_id: int) -> OpenVpnServer:
-        server = OpenVpnServer(**payload.model_dump(), created_by=actor_id, updated_by=actor_id)
+        data = self._apply_server_defaults(payload.model_dump())
+        server = OpenVpnServer(**data, created_by=actor_id, updated_by=actor_id)
         if server.is_default:
             self._clear_default_server()
         return self.commit(server, "OpenVPN服务器名称或编码已存在")
@@ -79,6 +88,7 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         update_data = payload.model_dump(exclude_unset=True)
         for field_name, value in update_data.items():
             setattr(server, field_name, value)
+        self._apply_server_defaults_to_instance(server)
         if server.is_default:
             self._clear_default_server(except_id=server.id)
         if server.is_deleted:
@@ -120,6 +130,12 @@ class OpenVpnService(BaseService[OpenVpnServer]):
             if not ca_path.exists():
                 return {"ok": False, "message": f"CA证书不存在：{ca_path}"}
             return {"ok": True, "message": "Easy-RSA证书后端配置可用"}
+        if server.certificate_backend == "ssh_easyrsa":
+            try:
+                self._run_remote_shell(server, self._remote_test_command(server))
+            except ConflictError as error:
+                return {"ok": False, "message": str(error)}
+            return {"ok": True, "message": "远程Easy-RSA证书后端配置可用"}
         return {
             "ok": server.is_active and server.status != "disabled",
             "message": "服务器配置可用，真实连通性测试请接入 OpenVPN management interface",
@@ -229,6 +245,9 @@ class OpenVpnService(BaseService[OpenVpnServer]):
             account.status = "enabled"
             account.assign_source = assign_source
             account.assignment_rule_id = rule_id
+            account.config_version += 1
+            if not account.vpn_username:
+                account.vpn_username = user.username
             if payload.vpn_username:
                 account.vpn_username = payload.vpn_username
             if payload.remark is not None:
@@ -244,6 +263,32 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         account.updated_by = actor_id
         self._close_online_sessions(account.id, "账号已禁用")
         return self.commit(account, "OpenVPN账号禁用失败")
+
+    def revoke_account(self, account_id: int, reason: Optional[str], actor_id: int) -> OpenVpnAccount:
+        account = self.get_account_required(account_id)
+        certificate = (
+            self.db.query(OpenVpnCertificate)
+            .filter(
+                OpenVpnCertificate.account_id == account.id,
+                OpenVpnCertificate.status == "issued",
+            )
+            .order_by(OpenVpnCertificate.expires_at.desc(), OpenVpnCertificate.id.desc())
+            .first()
+        )
+        if certificate:
+            server = self.get_server_required(certificate.server_id)
+            self._revoke_certificate_files(server, certificate.common_name)
+            certificate.status = "revoked"
+            certificate.revoked_at = datetime.utcnow()
+            certificate.revoked_reason = reason or "账号吊销"
+            self.db.add(certificate)
+
+        account.status = "revoked"
+        account.config_version += 1
+        account.updated_by = actor_id
+        self._close_online_sessions(account.id, "账号已吊销")
+        self._delete_account_certificate_files(account)
+        return self.commit(account, "OpenVPN账号吊销失败")
 
     def assign_account_server(self, account_id: int, server_id: Optional[int], actor_id: int) -> OpenVpnAccount:
         account = self.get_account_required(account_id)
@@ -427,12 +472,132 @@ class OpenVpnService(BaseService[OpenVpnServer]):
             query = query.filter(OpenVpnSession.status == status)
         return query.order_by(OpenVpnSession.connected_at.desc()).offset(skip).limit(limit).all()
 
+    def record_session_connect(self, payload) -> OpenVpnSession:
+        server = self._resolve_event_server(payload)
+        account = self._find_account_by_common_name(payload.common_name)
+        now = datetime.utcnow()
+        connected_at = payload.connected_at or now
+        real_ip = payload.real_ip or payload.trusted_ip
+
+        existing_sessions = (
+            self.db.query(OpenVpnSession)
+            .filter(
+                OpenVpnSession.server_id == server.id,
+                OpenVpnSession.common_name == payload.common_name,
+                OpenVpnSession.status == "online",
+            )
+            .all()
+        )
+        for item in existing_sessions:
+            item.status = "offline"
+            item.disconnected_at = connected_at
+            self.db.add(item)
+
+        session = OpenVpnSession(
+            server_id=server.id,
+            account_id=account.id if account else None,
+            user_id=account.user_id if account else None,
+            common_name=payload.common_name,
+            virtual_ip=payload.virtual_ip,
+            real_ip=real_ip,
+            connected_at=connected_at,
+            bytes_in=payload.bytes_in or 0,
+            bytes_out=payload.bytes_out or 0,
+            status="online",
+        )
+        server.current_clients = self._server_online_session_count(server.id) + 1
+        if account:
+            account.last_connected_at = connected_at
+            account.last_virtual_ip = payload.virtual_ip
+            account.last_real_ip = real_ip
+            self.db.add(account)
+        self.db.add(server)
+        self.db.add(
+            OpenVpnConnectionLog(
+                server_id=server.id,
+                account_id=account.id if account else None,
+                user_id=account.user_id if account else None,
+                action="connected",
+                real_ip=real_ip,
+                virtual_ip=payload.virtual_ip,
+                result="success",
+                message=payload.message or "客户端连接",
+                extra={"common_name": payload.common_name},
+            )
+        )
+        return self.commit(session, "OpenVPN连接事件记录失败")
+
+    def record_session_disconnect(self, payload) -> OpenVpnSession:
+        server = self._resolve_event_server(payload)
+        account = self._find_account_by_common_name(payload.common_name)
+        disconnected_at = payload.disconnected_at or datetime.utcnow()
+        real_ip = payload.real_ip or payload.trusted_ip
+        session = (
+            self.db.query(OpenVpnSession)
+            .filter(
+                OpenVpnSession.server_id == server.id,
+                OpenVpnSession.common_name == payload.common_name,
+                OpenVpnSession.status == "online",
+            )
+            .order_by(OpenVpnSession.connected_at.desc(), OpenVpnSession.id.desc())
+            .first()
+        )
+        if not session:
+            session = OpenVpnSession(
+                server_id=server.id,
+                account_id=account.id if account else None,
+                user_id=account.user_id if account else None,
+                common_name=payload.common_name,
+                virtual_ip=payload.virtual_ip,
+                real_ip=real_ip,
+                connected_at=disconnected_at,
+                status="offline",
+            )
+        session.status = "offline"
+        session.disconnected_at = disconnected_at
+        session.bytes_in = payload.bytes_in or session.bytes_in or 0
+        session.bytes_out = payload.bytes_out or session.bytes_out or 0
+        if payload.virtual_ip:
+            session.virtual_ip = payload.virtual_ip
+        if real_ip:
+            session.real_ip = real_ip
+
+        self.db.add(session)
+        self.db.flush()
+        self._record_session_traffic(session)
+
+        server.current_clients = self._server_online_session_count(server.id)
+        self.db.add(server)
+        self.db.add(
+            OpenVpnConnectionLog(
+                server_id=server.id,
+                account_id=session.account_id,
+                user_id=session.user_id,
+                action="disconnected",
+                real_ip=session.real_ip,
+                virtual_ip=session.virtual_ip,
+                result="success",
+                message=payload.message or "客户端断开",
+                extra={
+                    "common_name": payload.common_name,
+                    "bytes_in": session.bytes_in,
+                    "bytes_out": session.bytes_out,
+                },
+            )
+        )
+        return self.commit(session, "OpenVPN断开事件记录失败")
+
     def kick_session(self, session_id: int) -> OpenVpnSession:
         session = self.db.query(OpenVpnSession).filter(OpenVpnSession.id == session_id).first()
         if not session:
             raise NotFoundError("OpenVPN会话不存在")
+        if session.status != "online":
+            raise ConflictError("只有在线会话可以强制下线")
         session.status = "offline"
         session.disconnected_at = datetime.utcnow()
+        server = self.get_server_required(session.server_id, include_deleted=True)
+        server.current_clients = self._server_online_session_count(server.id)
+        self.db.add(server)
         self.db.add(
             OpenVpnConnectionLog(
                 server_id=session.server_id,
@@ -454,6 +619,7 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         server_id: Optional[int] = None,
         user_id: Optional[int] = None,
         action: Optional[str] = None,
+        cursor_id: Optional[int] = None,
     ) -> list[OpenVpnConnectionLog]:
         query = self.db.query(OpenVpnConnectionLog)
         if server_id:
@@ -462,7 +628,10 @@ class OpenVpnService(BaseService[OpenVpnServer]):
             query = query.filter(OpenVpnConnectionLog.user_id == user_id)
         if action:
             query = query.filter(OpenVpnConnectionLog.action == action)
-        return query.order_by(OpenVpnConnectionLog.occurred_at.desc()).offset(skip).limit(limit).all()
+        if cursor_id:
+            query = query.filter(OpenVpnConnectionLog.id < cursor_id)
+            skip = 0
+        return query.order_by(OpenVpnConnectionLog.id.desc()).offset(skip).limit(limit).all()
 
     def list_options(self) -> dict:
         users = (
@@ -470,7 +639,9 @@ class OpenVpnService(BaseService[OpenVpnServer]):
             .filter(
                 User.is_deleted.is_(False),
                 User.is_active.is_(True),
-                ~User.id.in_(self.db.query(OpenVpnAccount.user_id)),
+                ~User.id.in_(
+                    self.db.query(OpenVpnAccount.user_id).filter(OpenVpnAccount.status != "revoked")
+                ),
             )
             .order_by(User.id.desc())
             .limit(1000)
@@ -539,6 +710,185 @@ class OpenVpnService(BaseService[OpenVpnServer]):
             lines.append(",".join(f'"{value}"' for value in values))
         return "openvpn-logs.csv", "\n".join(lines)
 
+    def traffic_overview(
+        self,
+        period_type: str = "day",
+        date_from: Optional[date] = None,
+        date_to: Optional[date] = None,
+    ) -> dict:
+        query = self._traffic_aggregate_query(period_type, "server", date_from, date_to)
+        totals = query.with_entities(
+            func.coalesce(func.sum(OpenVpnTrafficAggregate.bytes_in), 0),
+            func.coalesce(func.sum(OpenVpnTrafficAggregate.bytes_out), 0),
+            func.coalesce(func.sum(OpenVpnTrafficAggregate.bytes_total), 0),
+            func.coalesce(func.sum(OpenVpnTrafficAggregate.session_count), 0),
+        ).first()
+        return {
+            "bytes_in": int(totals[0] or 0),
+            "bytes_out": int(totals[1] or 0),
+            "bytes_total": int(totals[2] or 0),
+            "session_count": int(totals[3] or 0),
+            "open_alert_count": self.db.query(OpenVpnTrafficAlert).filter(OpenVpnTrafficAlert.status == "open").count(),
+            "active_rule_count": self.db.query(OpenVpnTrafficThresholdRule).filter(OpenVpnTrafficThresholdRule.is_active.is_(True)).count(),
+        }
+
+    def traffic_distribution(
+        self,
+        dimension: str,
+        period_type: str = "day",
+        date_from: Optional[date] = None,
+        date_to: Optional[date] = None,
+    ) -> list[dict]:
+        self._validate_traffic_dimension(dimension)
+        rows = (
+            self._traffic_aggregate_query(period_type, dimension, date_from, date_to)
+            .with_entities(
+                OpenVpnTrafficAggregate.dimension_id,
+                func.coalesce(func.sum(OpenVpnTrafficAggregate.bytes_in), 0),
+                func.coalesce(func.sum(OpenVpnTrafficAggregate.bytes_out), 0),
+                func.coalesce(func.sum(OpenVpnTrafficAggregate.bytes_total), 0),
+                func.coalesce(func.sum(OpenVpnTrafficAggregate.session_count), 0),
+            )
+            .group_by(OpenVpnTrafficAggregate.dimension_id)
+            .order_by(func.sum(OpenVpnTrafficAggregate.bytes_total).desc())
+            .all()
+        )
+        names = self._traffic_dimension_names(dimension, [row[0] for row in rows if row[0]])
+        return [self._traffic_metric_item(dimension, row, names) for row in rows]
+
+    def traffic_ranking(
+        self,
+        dimension: str,
+        period_type: str = "day",
+        date_from: Optional[date] = None,
+        date_to: Optional[date] = None,
+        limit: int = 10,
+    ) -> list[dict]:
+        return self.traffic_distribution(dimension, period_type, date_from, date_to)[: max(1, min(limit, 100))]
+
+    def traffic_trend(
+        self,
+        period_type: str = "day",
+        date_from: Optional[date] = None,
+        date_to: Optional[date] = None,
+        dimension: Optional[str] = None,
+        target_id: Optional[int] = None,
+    ) -> list[dict]:
+        self._validate_traffic_period(period_type)
+        query = self.db.query(OpenVpnTrafficAggregate).filter(OpenVpnTrafficAggregate.period_type == period_type)
+        if dimension:
+            self._validate_traffic_dimension(dimension)
+            query = query.filter(OpenVpnTrafficAggregate.dimension_type == dimension)
+            if target_id:
+                query = query.filter(OpenVpnTrafficAggregate.dimension_id == target_id)
+        else:
+            query = query.filter(OpenVpnTrafficAggregate.dimension_type == "server")
+        query = self._apply_traffic_date_range(query, date_from, date_to)
+        rows = (
+            query.with_entities(
+                OpenVpnTrafficAggregate.period_start,
+                func.coalesce(func.sum(OpenVpnTrafficAggregate.bytes_in), 0),
+                func.coalesce(func.sum(OpenVpnTrafficAggregate.bytes_out), 0),
+                func.coalesce(func.sum(OpenVpnTrafficAggregate.bytes_total), 0),
+                func.coalesce(func.sum(OpenVpnTrafficAggregate.session_count), 0),
+            )
+            .group_by(OpenVpnTrafficAggregate.period_start)
+            .order_by(OpenVpnTrafficAggregate.period_start.asc())
+            .all()
+        )
+        return [
+            {
+                "period_start": row[0],
+                "bytes_in": int(row[1] or 0),
+                "bytes_out": int(row[2] or 0),
+                "bytes_total": int(row[3] or 0),
+                "session_count": int(row[4] or 0),
+            }
+            for row in rows
+        ]
+
+    def list_traffic_threshold_rules(
+        self,
+        skip: int = 0,
+        limit: int = 100,
+        target_type: Optional[str] = None,
+        target_id: Optional[int] = None,
+        is_active: Optional[bool] = None,
+    ) -> list[OpenVpnTrafficThresholdRule]:
+        query = self.db.query(OpenVpnTrafficThresholdRule)
+        if target_type:
+            query = query.filter(OpenVpnTrafficThresholdRule.target_type == target_type)
+        if target_id:
+            query = query.filter(OpenVpnTrafficThresholdRule.target_id == target_id)
+        if is_active is not None:
+            query = query.filter(OpenVpnTrafficThresholdRule.is_active.is_(is_active))
+        return query.order_by(OpenVpnTrafficThresholdRule.id.desc()).offset(skip).limit(limit).all()
+
+    def create_traffic_threshold_rule(
+        self,
+        payload: OpenVpnTrafficThresholdRuleCreate,
+        actor_id: int,
+    ) -> OpenVpnTrafficThresholdRule:
+        self._ensure_traffic_threshold_target_exists(payload.target_type, payload.target_id)
+        rule = OpenVpnTrafficThresholdRule(**payload.model_dump(), created_by=actor_id, updated_by=actor_id)
+        return self.commit(rule, "OpenVPN流量阈值规则已存在")
+
+    def update_traffic_threshold_rule(
+        self,
+        rule_id: int,
+        payload: OpenVpnTrafficThresholdRuleUpdate,
+        actor_id: int,
+    ) -> OpenVpnTrafficThresholdRule:
+        rule = self.get_traffic_threshold_rule_required(rule_id)
+        update_data = payload.model_dump(exclude_unset=True)
+        target_type = update_data.get("target_type", rule.target_type)
+        target_id = update_data.get("target_id", rule.target_id)
+        if "target_type" in update_data or "target_id" in update_data:
+            self._ensure_traffic_threshold_target_exists(target_type, target_id)
+        for field_name, value in update_data.items():
+            setattr(rule, field_name, value)
+        rule.updated_by = actor_id
+        return self.commit(rule, "OpenVPN流量阈值规则已存在")
+
+    def delete_traffic_threshold_rule(self, rule_id: int) -> OpenVpnTrafficThresholdRule:
+        rule = self.get_traffic_threshold_rule_required(rule_id)
+        self.db.delete(rule)
+        self.db.commit()
+        return rule
+
+    def get_traffic_threshold_rule_required(self, rule_id: int) -> OpenVpnTrafficThresholdRule:
+        rule = self.db.query(OpenVpnTrafficThresholdRule).filter(OpenVpnTrafficThresholdRule.id == rule_id).first()
+        if not rule:
+            raise NotFoundError("OpenVPN流量阈值规则不存在")
+        return rule
+
+    def list_traffic_alerts(
+        self,
+        skip: int = 0,
+        limit: int = 100,
+        status: Optional[str] = None,
+        target_type: Optional[str] = None,
+        target_id: Optional[int] = None,
+    ) -> list[OpenVpnTrafficAlert]:
+        query = self.db.query(OpenVpnTrafficAlert)
+        if status:
+            query = query.filter(OpenVpnTrafficAlert.status == status)
+        if target_type:
+            query = query.filter(OpenVpnTrafficAlert.target_type == target_type)
+        if target_id:
+            query = query.filter(OpenVpnTrafficAlert.target_id == target_id)
+        return query.order_by(OpenVpnTrafficAlert.created_at.desc()).offset(skip).limit(limit).all()
+
+    def process_traffic_alert(self, alert_id: int, note: Optional[str], actor_id: int) -> OpenVpnTrafficAlert:
+        alert = self.db.query(OpenVpnTrafficAlert).filter(OpenVpnTrafficAlert.id == alert_id).first()
+        if not alert:
+            raise NotFoundError("OpenVPN流量告警不存在")
+        alert.status = "processed"
+        alert.processed_by = actor_id
+        alert.processed_at = datetime.utcnow()
+        alert.process_note = note
+        return self.commit(alert, "OpenVPN流量告警处理失败")
+
     def resolve_user_server(self, user_id: int, preferred_server_id: Optional[int] = None):
         if preferred_server_id:
             return self.get_server_required(preferred_server_id), "manual", None
@@ -585,11 +935,370 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         self._close_online_sessions(account.id, "用户已禁用或删除")
         return self.commit(account, "OpenVPN账号禁用失败")
 
+    def _apply_server_defaults(self, data: dict) -> dict:
+        backend = data.get("certificate_backend") or "metadata"
+        if backend in ("ssh_easyrsa", "local_easyrsa"):
+            easy_rsa_dir = (data.get("easy_rsa_dir") or settings.openvpn_default_easy_rsa_dir).rstrip("/")
+            pki_dir = (data.get("pki_dir") or f"{easy_rsa_dir}/pki").rstrip("/")
+            data["easy_rsa_dir"] = easy_rsa_dir
+            data["pki_dir"] = pki_dir
+            data["ca_cert_path"] = data.get("ca_cert_path") or f"{pki_dir}/ca.crt"
+            data["crl_path"] = data.get("crl_path") or f"{pki_dir}/crl.pem"
+            data["tls_crypt_key_path"] = data.get("tls_crypt_key_path") or settings.openvpn_default_tls_crypt_key_path
+            data["client_config_dir"] = data.get("client_config_dir") or settings.openvpn_client_config_root
+        if backend == "ssh_easyrsa":
+            data["ssh_host"] = data.get("ssh_host") or data.get("host")
+            data["ssh_port"] = data.get("ssh_port") or 22
+            data["ssh_key_path"] = data.get("ssh_key_path") or settings.openvpn_default_ssh_key_path
+        return data
+
+    def _apply_server_defaults_to_instance(self, server: OpenVpnServer) -> None:
+        data = self._apply_server_defaults(
+            {
+                "certificate_backend": server.certificate_backend,
+                "host": server.host,
+                "ssh_host": server.ssh_host,
+                "ssh_port": server.ssh_port,
+                "ssh_key_path": server.ssh_key_path,
+                "easy_rsa_dir": server.easy_rsa_dir,
+                "pki_dir": server.pki_dir,
+                "ca_cert_path": server.ca_cert_path,
+                "tls_crypt_key_path": server.tls_crypt_key_path,
+                "crl_path": server.crl_path,
+                "client_config_dir": server.client_config_dir,
+            }
+        )
+        for field_name, value in data.items():
+            if hasattr(server, field_name):
+                setattr(server, field_name, value)
+
     def _clear_default_server(self, except_id: Optional[int] = None) -> None:
         query = self.db.query(OpenVpnServer).filter(OpenVpnServer.is_default.is_(True))
         if except_id:
             query = query.filter(OpenVpnServer.id != except_id)
         query.update({OpenVpnServer.is_default: False}, synchronize_session=False)
+
+    def _resolve_event_server(self, payload) -> OpenVpnServer:
+        if payload.server_id:
+            return self.get_server_required(payload.server_id, include_deleted=True)
+        if payload.server_code:
+            server = (
+                self.db.query(OpenVpnServer)
+                .filter(OpenVpnServer.code == payload.server_code, OpenVpnServer.is_deleted.is_(False))
+                .first()
+            )
+            if server:
+                return server
+        raise NotFoundError("OpenVPN服务器不存在，请检查事件上报的server_code或server_id")
+
+    def _record_session_traffic(self, session: OpenVpnSession) -> None:
+        if session.id and self.db.query(OpenVpnTrafficRecord.id).filter(OpenVpnTrafficRecord.session_id == session.id).first():
+            return
+        bytes_in = int(session.bytes_in or 0)
+        bytes_out = int(session.bytes_out or 0)
+        bytes_total = bytes_in + bytes_out
+        recorded_at = session.disconnected_at or datetime.utcnow()
+        account = self.db.query(OpenVpnAccount).filter(OpenVpnAccount.id == session.account_id).first() if session.account_id else None
+        certificate = self._find_session_certificate(session, account)
+        department_id = self._primary_department_id(account.user_id if account else session.user_id)
+
+        record = OpenVpnTrafficRecord(
+            server_id=session.server_id,
+            account_id=session.account_id,
+            certificate_id=certificate.id if certificate else None,
+            user_id=session.user_id,
+            department_id=department_id,
+            session_id=session.id,
+            common_name=session.common_name,
+            virtual_ip=session.virtual_ip,
+            real_ip=session.real_ip,
+            bytes_in=bytes_in,
+            bytes_out=bytes_out,
+            bytes_total=bytes_total,
+            recorded_at=recorded_at,
+        )
+        self.db.add(record)
+
+        dimensions = [
+            ("server", session.server_id, session.server_id, session.account_id, certificate.id if certificate else None, department_id),
+            ("certificate", certificate.id if certificate else None, session.server_id, session.account_id, certificate.id if certificate else None, department_id),
+            ("department", department_id, session.server_id, session.account_id, certificate.id if certificate else None, department_id),
+        ]
+        for period_type, period_start in self._traffic_periods(recorded_at).items():
+            for dimension_type, dimension_id, server_id, account_id, certificate_id, agg_department_id in dimensions:
+                if not dimension_id:
+                    continue
+                self._upsert_traffic_aggregate(
+                    period_type=period_type,
+                    period_start=period_start,
+                    dimension_type=dimension_type,
+                    dimension_id=dimension_id,
+                    server_id=server_id,
+                    account_id=account_id,
+                    certificate_id=certificate_id,
+                    department_id=agg_department_id,
+                    bytes_in=bytes_in,
+                    bytes_out=bytes_out,
+                    bytes_total=bytes_total,
+                )
+        self._evaluate_traffic_thresholds(recorded_at, session.server_id, certificate)
+
+    def _find_session_certificate(self, session: OpenVpnSession, account: Optional[OpenVpnAccount]) -> Optional[OpenVpnCertificate]:
+        query = self.db.query(OpenVpnCertificate).filter(
+            OpenVpnCertificate.server_id == session.server_id,
+            OpenVpnCertificate.common_name == session.common_name,
+        )
+        if account:
+            query = query.filter(OpenVpnCertificate.account_id == account.id)
+        return query.order_by(OpenVpnCertificate.issued_at.desc(), OpenVpnCertificate.id.desc()).first()
+
+    def _primary_department_id(self, user_id: Optional[int]) -> Optional[int]:
+        if not user_id:
+            return None
+        row = (
+            self.db.query(UserDepartment.department_id)
+            .filter(UserDepartment.user_id == user_id)
+            .order_by(UserDepartment.is_primary.desc(), UserDepartment.id.asc())
+            .first()
+        )
+        return row[0] if row else None
+
+    @staticmethod
+    def _traffic_periods(value: datetime) -> dict[str, date]:
+        current = value.date()
+        return {
+            "day": current,
+            "month": date(current.year, current.month, 1),
+        }
+
+    def _upsert_traffic_aggregate(
+        self,
+        period_type: str,
+        period_start: date,
+        dimension_type: str,
+        dimension_id: int,
+        server_id: Optional[int],
+        account_id: Optional[int],
+        certificate_id: Optional[int],
+        department_id: Optional[int],
+        bytes_in: int,
+        bytes_out: int,
+        bytes_total: int,
+    ) -> OpenVpnTrafficAggregate:
+        aggregate = (
+            self.db.query(OpenVpnTrafficAggregate)
+            .filter(
+                OpenVpnTrafficAggregate.period_type == period_type,
+                OpenVpnTrafficAggregate.period_start == period_start,
+                OpenVpnTrafficAggregate.dimension_type == dimension_type,
+                OpenVpnTrafficAggregate.dimension_id == dimension_id,
+            )
+            .first()
+        )
+        if not aggregate:
+            aggregate = OpenVpnTrafficAggregate(
+                period_type=period_type,
+                period_start=period_start,
+                dimension_type=dimension_type,
+                dimension_id=dimension_id,
+                server_id=server_id,
+                account_id=account_id,
+                certificate_id=certificate_id,
+                department_id=department_id,
+                bytes_in=0,
+                bytes_out=0,
+                bytes_total=0,
+                session_count=0,
+            )
+        aggregate.bytes_in = int(aggregate.bytes_in or 0) + bytes_in
+        aggregate.bytes_out = int(aggregate.bytes_out or 0) + bytes_out
+        aggregate.bytes_total = int(aggregate.bytes_total or 0) + bytes_total
+        aggregate.session_count = int(aggregate.session_count or 0) + 1
+        aggregate.updated_at = datetime.utcnow()
+        self.db.add(aggregate)
+        return aggregate
+
+    def _evaluate_traffic_thresholds(
+        self,
+        recorded_at: datetime,
+        server_id: Optional[int],
+        certificate: Optional[OpenVpnCertificate],
+    ) -> None:
+        targets = [("server", server_id)]
+        if certificate:
+            targets.append(("certificate", certificate.id))
+        for target_type, target_id in targets:
+            if not target_id:
+                continue
+            rules = (
+                self.db.query(OpenVpnTrafficThresholdRule)
+                .filter(
+                    OpenVpnTrafficThresholdRule.target_type == target_type,
+                    OpenVpnTrafficThresholdRule.target_id == target_id,
+                    OpenVpnTrafficThresholdRule.is_active.is_(True),
+                )
+                .all()
+            )
+            for rule in rules:
+                period_start = self._traffic_periods(recorded_at)[rule.period_type]
+                aggregate = (
+                    self.db.query(OpenVpnTrafficAggregate)
+                    .filter(
+                        OpenVpnTrafficAggregate.period_type == rule.period_type,
+                        OpenVpnTrafficAggregate.period_start == period_start,
+                        OpenVpnTrafficAggregate.dimension_type == target_type,
+                        OpenVpnTrafficAggregate.dimension_id == target_id,
+                    )
+                    .first()
+                )
+                actual_bytes = int(aggregate.bytes_total or 0) if aggregate else 0
+                if actual_bytes <= int(rule.threshold_bytes or 0):
+                    continue
+                exists = (
+                    self.db.query(OpenVpnTrafficAlert.id)
+                    .filter(
+                        OpenVpnTrafficAlert.rule_id == rule.id,
+                        OpenVpnTrafficAlert.period_type == rule.period_type,
+                        OpenVpnTrafficAlert.period_start == period_start,
+                        OpenVpnTrafficAlert.target_type == target_type,
+                        OpenVpnTrafficAlert.target_id == target_id,
+                    )
+                    .first()
+                )
+                if exists:
+                    continue
+                alert = OpenVpnTrafficAlert(
+                    rule_id=rule.id,
+                    target_type=target_type,
+                    target_id=target_id,
+                    server_id=server_id if target_type == "server" else certificate.server_id if certificate else None,
+                    certificate_id=certificate.id if certificate else None,
+                    account_id=certificate.account_id if certificate else None,
+                    period_type=rule.period_type,
+                    period_start=period_start,
+                    threshold_bytes=rule.threshold_bytes,
+                    actual_bytes=actual_bytes,
+                    action=rule.action,
+                    status="open",
+                    message=f"OpenVPN流量超过阈值：当前 {actual_bytes} 字节，阈值 {rule.threshold_bytes} 字节",
+                )
+                self.db.add(alert)
+                if rule.action == "disable_certificate" and certificate:
+                    self._disable_certificate_by_threshold(certificate, "流量阈值超限自动禁用")
+
+    def _disable_certificate_by_threshold(self, certificate: OpenVpnCertificate, reason: str) -> None:
+        if certificate.status == "revoked":
+            return
+        certificate.status = "revoked"
+        certificate.revoked_at = datetime.utcnow()
+        certificate.revoked_reason = reason
+        account = self.db.query(OpenVpnAccount).filter(OpenVpnAccount.id == certificate.account_id).first()
+        if account:
+            account.config_version += 1
+            account.updated_at = datetime.utcnow()
+            self._close_online_sessions(account.id, reason)
+            self.db.add(account)
+        self.db.add(certificate)
+
+    def _traffic_aggregate_query(
+        self,
+        period_type: str,
+        dimension: str,
+        date_from: Optional[date],
+        date_to: Optional[date],
+    ):
+        self._validate_traffic_period(period_type)
+        self._validate_traffic_dimension(dimension)
+        query = self.db.query(OpenVpnTrafficAggregate).filter(
+            OpenVpnTrafficAggregate.period_type == period_type,
+            OpenVpnTrafficAggregate.dimension_type == dimension,
+        )
+        return self._apply_traffic_date_range(query, date_from, date_to)
+
+    @staticmethod
+    def _apply_traffic_date_range(query, date_from: Optional[date], date_to: Optional[date]):
+        if date_from:
+            query = query.filter(OpenVpnTrafficAggregate.period_start >= date_from)
+        if date_to:
+            query = query.filter(OpenVpnTrafficAggregate.period_start <= date_to)
+        return query
+
+    @staticmethod
+    def _validate_traffic_period(period_type: str) -> None:
+        if period_type not in {"day", "month"}:
+            raise ConflictError("统计周期只能是 day 或 month")
+
+    @staticmethod
+    def _validate_traffic_dimension(dimension: str) -> None:
+        if dimension not in {"server", "department", "certificate"}:
+            raise ConflictError("统计维度只能是 server、department 或 certificate")
+
+    def _traffic_dimension_names(self, dimension: str, ids: list[int]) -> dict[int, str]:
+        if not ids:
+            return {}
+        if dimension == "server":
+            rows = self.db.query(OpenVpnServer.id, OpenVpnServer.name).filter(OpenVpnServer.id.in_(ids)).all()
+            return {row[0]: row[1] for row in rows}
+        if dimension == "department":
+            rows = self.db.query(Department.id, Department.name).filter(Department.id.in_(ids)).all()
+            return {row[0]: row[1] for row in rows}
+        rows = (
+            self.db.query(OpenVpnCertificate.id, OpenVpnCertificate.common_name, User.username)
+            .join(OpenVpnAccount, OpenVpnAccount.id == OpenVpnCertificate.account_id)
+            .join(User, User.id == OpenVpnAccount.user_id)
+            .filter(OpenVpnCertificate.id.in_(ids))
+            .all()
+        )
+        return {row[0]: f"{row[2]} / {row[1]}" for row in rows}
+
+    def _traffic_metric_item(self, dimension: str, row, names: dict[int, str]) -> dict:
+        dimension_id = row[0]
+        return {
+            "dimension_type": dimension,
+            "dimension_id": dimension_id,
+            "name": names.get(dimension_id, "未识别对象" if dimension_id else "未归属"),
+            "bytes_in": int(row[1] or 0),
+            "bytes_out": int(row[2] or 0),
+            "bytes_total": int(row[3] or 0),
+            "session_count": int(row[4] or 0),
+        }
+
+    def _ensure_traffic_threshold_target_exists(self, target_type: str, target_id: int) -> None:
+        if target_type == "server":
+            self.get_server_required(target_id, include_deleted=True)
+            return
+        if target_type == "certificate":
+            self.get_certificate_required(target_id)
+            return
+        raise ConflictError("阈值对象只能是服务器或证书")
+
+    def traffic_target_name(self, target_type: str, target_id: Optional[int]) -> Optional[str]:
+        if not target_id:
+            return None
+        if target_type == "server":
+            server = self.db.query(OpenVpnServer).filter(OpenVpnServer.id == target_id).first()
+            return server.name if server else None
+        if target_type == "certificate":
+            certificate = self.db.query(OpenVpnCertificate).filter(OpenVpnCertificate.id == target_id).first()
+            if not certificate:
+                return None
+            username = certificate.account.user.username if certificate.account and certificate.account.user else certificate.common_name
+            return f"{username} / {certificate.common_name}"
+        return None
+
+    def _find_account_by_common_name(self, common_name: str) -> Optional[OpenVpnAccount]:
+        return (
+            self.db.query(OpenVpnAccount)
+            .filter(OpenVpnAccount.vpn_username == common_name)
+            .first()
+        )
+
+    def _server_online_session_count(self, server_id: int) -> int:
+        return (
+            self.db.query(OpenVpnSession)
+            .filter(OpenVpnSession.server_id == server_id, OpenVpnSession.status == "online")
+            .count()
+        )
 
     def _collect_user_targets(self, user_id: int) -> dict[str, list[int]]:
         department_ids = [row[0] for row in self.db.query(UserDepartment.department_id).filter(UserDepartment.user_id == user_id)]
@@ -654,8 +1363,10 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         expires_at: datetime,
         allow_existing: bool = True,
     ) -> dict:
+        if server.certificate_backend == "ssh_easyrsa":
+            return self._issue_remote_certificate_files(server, common_name, expires_at, allow_existing=allow_existing)
         if server.certificate_backend != "local_easyrsa":
-            return {"serial_number": uuid4().hex}
+            raise ConflictError("服务器未配置真实证书签发后端，请在服务器管理中配置 Easy-RSA 后再签发证书")
 
         self._validate_common_name(common_name)
         pki_dir = self._server_pki_dir(server)
@@ -679,15 +1390,25 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         }
 
     def _revoke_certificate_files(self, server: OpenVpnServer, common_name: str) -> None:
-        if server.certificate_backend != "local_easyrsa":
+        if server.certificate_backend == "ssh_easyrsa":
+            self._validate_common_name(common_name)
+            self._run_remote_easyrsa(server, ["revoke", common_name])
+            self._run_remote_easyrsa(server, ["gen-crl"])
             return
+        if server.certificate_backend != "local_easyrsa":
+            raise ConflictError("服务器未配置真实证书签发后端，无法吊销证书")
         self._validate_common_name(common_name)
         self._run_easyrsa(server, ["revoke", common_name])
         self._run_easyrsa(server, ["gen-crl"])
 
     def _renew_certificate_files(self, server: OpenVpnServer, common_name: str, expires_at: datetime) -> dict:
+        if server.certificate_backend == "ssh_easyrsa":
+            self._validate_common_name(common_name)
+            valid_days = max(1, (expires_at - datetime.utcnow()).days)
+            self._run_remote_easyrsa(server, ["renew", common_name, "nopass"], env={"EASYRSA_CERT_EXPIRE": str(valid_days)})
+            return self._remote_certificate_info(server, common_name)
         if server.certificate_backend != "local_easyrsa":
-            return {"serial_number": uuid4().hex}
+            raise ConflictError("服务器未配置真实证书签发后端，请在服务器管理中配置 Easy-RSA 后再续期证书")
         self._validate_common_name(common_name)
         valid_days = max(1, (expires_at - datetime.utcnow()).days)
         self._run_easyrsa(server, ["renew", common_name, "nopass"], env={"EASYRSA_CERT_EXPIRE": str(valid_days)})
@@ -705,6 +1426,11 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         }
 
     def _archive_certificate_files(self, server: OpenVpnServer, account: OpenVpnAccount, cert_info: dict) -> dict:
+        if cert_info.get("remote"):
+            if not server.client_config_dir:
+                raise ConflictError("远程证书签发必须配置证书文件输出目录")
+            return self._archive_remote_certificate_files(server, account, cert_info)
+
         if not server.client_config_dir:
             return cert_info
 
@@ -741,12 +1467,40 @@ class OpenVpnService(BaseService[OpenVpnServer]):
 
         return archived_info
 
+    def _archive_remote_certificate_files(self, server: OpenVpnServer, account: OpenVpnAccount, cert_info: dict) -> dict:
+        target_dir = self._account_certificate_dir(server, account)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        archived_info = dict(cert_info)
+        basename = self._account_certificate_basename(server, account)
+        file_map = {
+            "cert_path": (cert_info.get("remote_cert_path"), f"{basename}.crt"),
+            "key_path": (cert_info.get("remote_key_path"), f"{basename}.key"),
+            "request_path": (cert_info.get("remote_request_path"), f"{basename}.req"),
+        }
+        for field_name, (remote_path, filename) in file_map.items():
+            if not remote_path:
+                continue
+            target_path = target_dir / filename
+            self._scp_from_remote(server, remote_path, target_path)
+            if field_name == "key_path":
+                target_path.chmod(0o600)
+            archived_info[field_name] = str(target_path)
+
+        ca_target = target_dir / "ca.crt"
+        remote_ca_path = server.ca_cert_path or f"{self._remote_pki_dir(server)}/ca.crt"
+        self._scp_from_remote(server, remote_ca_path, ca_target)
+        if server.tls_crypt_key_path:
+            self._scp_from_remote(server, server.tls_crypt_key_path, target_dir / "tls.key")
+
+        return archived_info
+
     def _account_certificate_dir(self, server: OpenVpnServer, account: OpenVpnAccount) -> Path:
         if not server.client_config_dir:
             raise ConflictError("服务器未配置证书文件输出目录")
+        server_segment = self._safe_path_segment(server.code or server.host)
         department_segment = self._account_department_segment(account)
         user_segment = self._safe_path_segment(account.user.username if account.user else account.vpn_username)
-        return Path(server.client_config_dir).expanduser() / department_segment / user_segment
+        return Path(server.client_config_dir).expanduser() / server_segment / department_segment / user_segment
 
     def _account_department_segment(self, account: OpenVpnAccount) -> str:
         department = (
@@ -764,10 +1518,193 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         server_host = self._safe_path_segment(server.host)
         return f"{department_code}-{username}-{server_host}"
 
+    def _delete_account_certificate_files(self, account: OpenVpnAccount) -> None:
+        certificates = (
+            self.db.query(OpenVpnCertificate)
+            .filter(OpenVpnCertificate.account_id == account.id)
+            .all()
+        )
+        account_dirs: set[Path] = set()
+        allowed_roots: set[Path] = set()
+
+        related_servers = [certificate.server for certificate in certificates if certificate.server and certificate.server.client_config_dir]
+        if account.server and account.server.client_config_dir:
+            related_servers.append(account.server)
+
+        for server in related_servers:
+            root = Path(server.client_config_dir).expanduser()
+            allowed_roots.add(root)
+            try:
+                account_dirs.add(self._account_certificate_dir(server, account))
+            except ConflictError:
+                continue
+
+        try:
+            for certificate in certificates:
+                for field_name in ("cert_path", "key_path", "request_path", "config_file_path"):
+                    value = getattr(certificate, field_name, None)
+                    if not value:
+                        continue
+                    path = Path(value).expanduser()
+                    if not self._is_path_under_any(path, allowed_roots):
+                        continue
+                    if path.exists() and (path.is_file() or path.is_symlink()):
+                        path.unlink()
+                    account_dirs.add(path.parent)
+                    setattr(certificate, field_name, None)
+                self.db.add(certificate)
+
+            for directory in sorted(account_dirs, key=lambda item: len(item.parts), reverse=True):
+                if not self._is_path_under_any(directory, allowed_roots):
+                    continue
+                if directory.exists():
+                    shutil.rmtree(directory)
+        except OSError as exc:
+            raise ConflictError(f"OpenVPN账号吊销失败，证书文件删除失败：{exc}") from exc
+
+    @staticmethod
+    def _is_path_under_any(path: Path, roots: set[Path]) -> bool:
+        if not roots:
+            return False
+        try:
+            resolved_path = path.resolve()
+        except OSError:
+            resolved_path = path.absolute()
+        for root in roots:
+            try:
+                resolved_path.relative_to(root.resolve())
+                return True
+            except (OSError, ValueError):
+                continue
+        return False
+
     @staticmethod
     def _safe_path_segment(value: str) -> str:
         value = (value or "").strip() or "未命名"
         return re.sub(r'[\\/:*?"<>|\s]+', "_", value).strip("._") or "未命名"
+
+    def _issue_remote_certificate_files(
+        self,
+        server: OpenVpnServer,
+        common_name: str,
+        expires_at: datetime,
+        allow_existing: bool = True,
+    ) -> dict:
+        self._validate_common_name(common_name)
+        info = self._remote_certificate_info(server, common_name, check_exists=False)
+        if not allow_existing or not self._remote_file_exists(server, info["remote_cert_path"], info["remote_key_path"]):
+            valid_days = max(1, (expires_at - datetime.utcnow()).days)
+            self._run_remote_easyrsa(server, ["build-client-full", common_name, "nopass"], env={"EASYRSA_CERT_EXPIRE": str(valid_days)})
+        return self._remote_certificate_info(server, common_name)
+
+    def _remote_certificate_info(self, server: OpenVpnServer, common_name: str, check_exists: bool = True) -> dict:
+        pki_dir = self._remote_pki_dir(server)
+        cert_path = f"{pki_dir}/issued/{common_name}.crt"
+        key_path = f"{pki_dir}/private/{common_name}.key"
+        request_path = f"{pki_dir}/reqs/{common_name}.req"
+        if check_exists and not self._remote_file_exists(server, cert_path, key_path):
+            raise ConflictError("远程Easy-RSA签发完成后未找到客户端证书或私钥")
+        serial_number = self._remote_certificate_serial(server, cert_path) if check_exists else uuid4().hex
+        return {
+            "remote": True,
+            "serial_number": serial_number,
+            "remote_cert_path": cert_path,
+            "remote_key_path": key_path,
+            "remote_request_path": request_path if self._remote_file_exists(server, request_path) else None,
+        }
+
+    def _run_remote_easyrsa(self, server: OpenVpnServer, args: list[str], env: Optional[dict] = None) -> None:
+        easy_rsa_dir = self._remote_easy_rsa_dir(server)
+        env_prefix = ""
+        if env:
+            env_prefix = " ".join(f"{shlex.quote(key)}={shlex.quote(str(value))}" for key, value in env.items()) + " "
+        quoted_args = " ".join(shlex.quote(arg) for arg in args)
+        command = f"cd {shlex.quote(easy_rsa_dir)} && {env_prefix}./easyrsa --batch {quoted_args}"
+        self._run_remote_shell(server, command)
+
+    def _remote_certificate_serial(self, server: OpenVpnServer, cert_path: str) -> str:
+        command = f"openssl x509 -in {shlex.quote(cert_path)} -noout -serial"
+        result = self._run_remote_shell(server, command, capture=True)
+        if "serial=" in result:
+            return result.strip().split("serial=", 1)[1]
+        return uuid4().hex
+
+    def _remote_file_exists(self, server: OpenVpnServer, *paths: str) -> bool:
+        checks = " && ".join(f"test -f {shlex.quote(path)}" for path in paths if path)
+        if not checks:
+            return False
+        try:
+            self._run_remote_shell(server, checks)
+            return True
+        except ConflictError:
+            return False
+
+    def _remote_test_command(self, server: OpenVpnServer) -> str:
+        easy_rsa_dir = self._remote_easy_rsa_dir(server)
+        pki_dir = self._remote_pki_dir(server)
+        ca_path = server.ca_cert_path or f"{pki_dir}/ca.crt"
+        return " && ".join(
+            [
+                f"test -x {shlex.quote(f'{easy_rsa_dir}/easyrsa')}",
+                f"test -d {shlex.quote(pki_dir)}",
+                f"test -f {shlex.quote(ca_path)}",
+            ]
+        )
+
+    def _run_remote_shell(self, server: OpenVpnServer, command: str, capture: bool = False) -> str:
+        ssh_command = [*self._ssh_base_command(server), self._ssh_target(server), command]
+        result = subprocess.run(
+            ssh_command,
+            capture_output=True,
+            text=True,
+            timeout=180,
+            check=False,
+        )
+        if result.returncode != 0:
+            message = (result.stderr or result.stdout or "远程SSH命令执行失败").strip()
+            raise ConflictError(message[-500:])
+        return result.stdout.strip() if capture else ""
+
+    def _scp_from_remote(self, server: OpenVpnServer, remote_path: str, target_path: Path) -> None:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        scp_command = ["scp", "-P", str(server.ssh_port or 22), "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10"]
+        if server.ssh_key_path:
+            scp_command.extend(["-i", str(Path(server.ssh_key_path).expanduser())])
+        scp_command.extend([f"{self._ssh_target(server)}:{remote_path}", str(target_path)])
+        result = subprocess.run(
+            scp_command,
+            capture_output=True,
+            text=True,
+            timeout=180,
+            check=False,
+        )
+        if result.returncode != 0:
+            message = (result.stderr or result.stdout or "远程证书文件拉取失败").strip()
+            raise ConflictError(message[-500:])
+
+    def _ssh_base_command(self, server: OpenVpnServer) -> list[str]:
+        command = ["ssh", "-p", str(server.ssh_port or 22), "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10"]
+        if server.ssh_key_path:
+            command.extend(["-i", str(Path(server.ssh_key_path).expanduser())])
+        return command
+
+    def _ssh_target(self, server: OpenVpnServer) -> str:
+        if not server.ssh_user:
+            raise ConflictError("服务器未配置证书服务器SSH用户")
+        host = server.ssh_host or server.host
+        if not host:
+            raise ConflictError("服务器未配置证书服务器SSH地址")
+        return f"{server.ssh_user}@{host}"
+
+    def _remote_easy_rsa_dir(self, server: OpenVpnServer) -> str:
+        if not server.easy_rsa_dir:
+            raise ConflictError("服务器未配置远程Easy-RSA目录")
+        return server.easy_rsa_dir.rstrip("/")
+
+    def _remote_pki_dir(self, server: OpenVpnServer) -> str:
+        if server.pki_dir:
+            return server.pki_dir.rstrip("/")
+        return f"{self._remote_easy_rsa_dir(server)}/pki"
 
     def _run_easyrsa(self, server: OpenVpnServer, args: list[str], env: Optional[dict] = None) -> None:
         if not server.easy_rsa_dir:
@@ -802,6 +1739,8 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         return Path(server.easy_rsa_dir).expanduser() / "pki"
 
     def _render_client_config(self, server: OpenVpnServer, certificate: OpenVpnCertificate) -> str:
+        if server.certificate_backend not in ("local_easyrsa", "ssh_easyrsa"):
+            raise ConflictError("服务器未配置真实证书签发后端，无法生成可用的OpenVPN配置")
         template = server.config_template or self._default_config_template()
         values = {
             "host": server.host,
@@ -815,20 +1754,26 @@ class OpenVpnService(BaseService[OpenVpnServer]):
             "tls_crypt": "",
             "tls_crypt_block": "",
         }
-        if server.certificate_backend == "local_easyrsa":
+        if not certificate.cert_path or not certificate.key_path:
+            raise ConflictError("证书记录缺少客户端证书或私钥路径")
+        cert_path = Path(certificate.cert_path).expanduser()
+        key_path = Path(certificate.key_path).expanduser()
+        if server.certificate_backend == "ssh_easyrsa":
+            ca_path = cert_path.parent / "ca.crt"
+            tls_crypt_path = cert_path.parent / "tls.key"
+        else:
             ca_path = Path(server.ca_cert_path).expanduser() if server.ca_cert_path else self._server_pki_dir(server) / "ca.crt"
-            if not certificate.cert_path or not certificate.key_path:
-                raise ConflictError("证书记录缺少客户端证书或私钥路径")
-            values.update(
-                {
-                    "ca": self._read_file(ca_path),
-                    "cert": self._read_file(Path(certificate.cert_path).expanduser()),
-                    "key": self._read_file(Path(certificate.key_path).expanduser()),
-                    "tls_crypt": self._read_file(Path(server.tls_crypt_key_path).expanduser()) if server.tls_crypt_key_path else "",
-                }
-            )
-            if values["tls_crypt"]:
-                values["tls_crypt_block"] = f"<tls-crypt>\n{values['tls_crypt']}\n</tls-crypt>"
+            tls_crypt_path = Path(server.tls_crypt_key_path).expanduser() if server.tls_crypt_key_path else None
+        values.update(
+            {
+                "ca": self._read_file(ca_path),
+                "cert": self._read_file(cert_path),
+                "key": self._read_file(key_path),
+                "tls_crypt": self._read_file(tls_crypt_path) if tls_crypt_path and tls_crypt_path.exists() else "",
+            }
+        )
+        if values["tls_crypt"]:
+            values["tls_crypt_block"] = f"<tls-crypt>\n{values['tls_crypt']}\n</tls-crypt>"
         return template.format(**values)
 
     @staticmethod
@@ -866,6 +1811,8 @@ nobind
 persist-key
 persist-tun
 remote-cert-tls server
+dhcp-option DNS 1.1.1.1
+dhcp-option DNS 1.0.0.1
 verb 3
 
 <ca>

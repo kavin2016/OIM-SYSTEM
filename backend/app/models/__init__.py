@@ -7,6 +7,10 @@ from .openvpn import (
     OpenVpnConnectionLog,
     OpenVpnServer,
     OpenVpnSession,
+    OpenVpnTrafficAggregate,
+    OpenVpnTrafficAlert,
+    OpenVpnTrafficRecord,
+    OpenVpnTrafficThresholdRule,
 )
 from .attendance import (
     AttendanceDailyResult,
@@ -46,6 +50,10 @@ __all__ = [
     "OpenVpnConnectionLog",
     "OpenVpnServer",
     "OpenVpnSession",
+    "OpenVpnTrafficAggregate",
+    "OpenVpnTrafficAlert",
+    "OpenVpnTrafficRecord",
+    "OpenVpnTrafficThresholdRule",
     "Permission",
     "Position",
     "Role",

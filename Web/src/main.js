@@ -7,6 +7,7 @@ import {
   ElMenu,
   ElMenuItem,
   ElOption,
+  ElPagination,
   ElSelect,
   ElSubMenu,
   ElTree,
@@ -20,6 +21,7 @@ import 'element-plus/theme-chalk/el-icon.css'
 import 'element-plus/theme-chalk/el-menu.css'
 import 'element-plus/theme-chalk/el-menu-item.css'
 import 'element-plus/theme-chalk/el-option.css'
+import 'element-plus/theme-chalk/el-pagination.css'
 import 'element-plus/theme-chalk/el-select.css'
 import 'element-plus/theme-chalk/el-sub-menu.css'
 import 'element-plus/theme-chalk/el-tree.css'
@@ -38,6 +40,7 @@ createApp(App)
   .component('ElMenu', ElMenu)
   .component('ElMenuItem', ElMenuItem)
   .component('ElOption', ElOption)
+  .component('ElPagination', ElPagination)
   .component('ElSelect', ElSelect)
   .component('ElSubMenu', ElSubMenu)
   .component('ElTree', ElTree)

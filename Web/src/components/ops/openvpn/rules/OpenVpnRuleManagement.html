@@ -1,0 +1,112 @@
+<section class="admin-panel ops-management-page">
+  <div v-if="loading" class="loading-layer">
+    <div class="loading-box">加载数据...</div>
+  </div>
+
+  <div class="query-panel">
+    <div class="query-header">
+      <div><h3>OpenVPN分配策略</h3></div>
+    </div>
+  </div>
+
+  <section class="resource-list">
+    <div class="user-template-toolbar">
+      <button v-if="can('ops:openvpn:rule:create')" type="button" class="primary-button" @click="openCreateRule">
+        <span class="button-icon">{{ actionIconMap.create }}</span>
+        <span>新增</span>
+      </button>
+      <button v-if="can('ops:openvpn:rule:update')" type="button" class="secondary-button success-soft-button" :disabled="selectedRows.length !== 1" @click="editSelectedRule">
+        <span class="button-icon">{{ actionIconMap.update }}</span>
+        <span>修改</span>
+      </button>
+      <button v-if="can('ops:openvpn:rule:delete')" type="button" class="danger-button danger-soft-button" :disabled="selectedRows.length === 0" @click="deleteSelectedRules">
+        <span class="button-icon">{{ actionIconMap.delete }}</span>
+        <span>删除</span>
+      </button>
+    </div>
+    <form class="query-panel" @submit.prevent="searchRules">
+      <div class="query-body">
+        <div class="query-grid">
+          <label>
+            <span>服务器</span>
+            <select v-model="ruleQuery.server_id">
+              <option value="">全部</option>
+              <option v-for="server in servers" :key="server.id" :value="server.id">{{ server.name }}</option>
+            </select>
+          </label>
+          <label>
+            <span>绑定类型</span>
+            <select v-model="ruleQuery.target_type">
+              <option value="">全部</option>
+              <option value="department">部门</option>
+              <option value="user">用户</option>
+              <option value="role">角色</option>
+              <option value="position">岗位</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div class="query-actions">
+        <button type="submit" class="primary-button" :disabled="loading">
+          <span class="button-icon">{{ actionIconMap.query }}</span>
+          <span>{{ loading ? '查询中...' : '查询' }}</span>
+        </button>
+        <button type="button" class="secondary-button" :disabled="loading" @click="resetQuery">
+          <span>↻</span>
+          <span>重置</span>
+        </button>
+      </div>
+    </form>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th class="selection-cell"><input type="checkbox" :checked="isAllRowsSelected" @change="toggleAllRows" /></th><th>ID</th><th>规则名称</th><th>绑定类型</th><th>目标ID</th><th>服务器</th><th>优先级</th><th>允许回退</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody>
+          <tr v-if="loading"><td colspan="10" class="empty-cell">加载中...</td></tr>
+          <tr v-else-if="rules.length === 0"><td colspan="10" class="empty-cell">暂无数据</td></tr>
+          <tr v-for="item in rules" v-else :key="item.id">
+            <td class="selection-cell"><input type="checkbox" :checked="selectedRowIds.includes(item.id)" @change="toggleRowSelection(item)" /></td>
+            <td>{{ item.id }}</td><td>{{ item.name }}</td><td>{{ item.target_type }}</td><td>{{ item.target_id }}</td><td>{{ serverName(item.server_id) }}</td><td>{{ item.priority }}</td>
+            <td>{{ item.fallback_enabled ? '是' : '否' }}</td><td>{{ item.is_active ? '启用' : '停用' }}</td>
+            <td class="action-cell">
+              <button v-if="can('ops:openvpn:rule:update')" type="button" class="secondary-button" @click="openEditRule(item)">编辑</button>
+              <button v-if="can('ops:openvpn:rule:delete')" type="button" class="danger-button" @click="deleteRule(item)">删除</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="resource-pagination">
+      <span class="resource-pagination-info">显示 {{ openVpnPageStart(pagination, rules.length) }}-{{ openVpnPageEnd(pagination, rules.length) }} 条</span>
+      <el-pagination
+        v-model:current-page="pagination.page"
+        v-model:page-size="pagination.pageSize"
+        background
+        :disabled="loading"
+        :page-sizes="openVpnPageSizeOptions"
+        :total="openVpnPaginationTotal(pagination, rules.length)"
+        layout="sizes, prev, pager, next"
+        @size-change="changePageSize"
+        @current-change="changePage"
+      />
+    </div>
+  </section>
+
+  <div v-if="ruleDialogVisible" class="layer-mask">
+    <section class="layer-panel layer-panel-small" role="dialog" aria-modal="true">
+      <header class="layer-header"><h3>{{ editingRuleId ? '编辑分配规则' : '新增分配规则' }}</h3><button type="button" class="text-button icon-only-button" aria-label="关闭" title="关闭" @click="ruleDialogVisible = false">×</button></header>
+      <form class="layer-form" @submit.prevent="saveRule">
+        <div class="layer-form-grid layer-form-grid-single">
+          <label><span>规则名称</span><input v-model="ruleForm.name" type="text" required /></label>
+          <label><span>服务器</span><select v-model="ruleForm.server_id" required><option value="">请选择</option><option v-for="server in servers" :key="server.id" :value="server.id">{{ server.name }}</option></select></label>
+          <label><span>绑定类型</span><select v-model="ruleForm.target_type"><option value="department">部门</option><option value="user">用户</option><option value="role">角色</option><option value="position">岗位</option></select></label>
+          <label><span>绑定对象</span><select v-model="ruleForm.target_id" required><option value="">请选择</option><option v-for="item in targetOptions" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
+          <label><span>优先级</span><input v-model.number="ruleForm.priority" type="number" /></label>
+          <label><span>允许回退</span><select v-model="ruleForm.fallback_enabled"><option :value="false">否</option><option :value="true">是</option></select></label>
+          <label><span>状态</span><select v-model="ruleForm.is_active"><option :value="true">启用</option><option :value="false">停用</option></select></label>
+          <label><span>备注</span><textarea v-model="ruleForm.remark" rows="3"></textarea></label>
+        </div>
+        <footer class="layer-footer"><button type="button" class="secondary-button" @click="ruleDialogVisible = false">取消</button><button type="submit" class="primary-button">保存</button></footer>
+      </form>
+    </section>
+  </div>
+</section>

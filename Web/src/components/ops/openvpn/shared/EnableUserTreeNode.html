@@ -1,0 +1,20 @@
+<div class="vpn-user-tree-node">
+  <button
+    type="button"
+    class="vpn-user-tree-item"
+    :class="{ department: !isUser, user: isUser, selected: isSelected }"
+    :style="{ paddingLeft: `${12 + level * 16}px` }"
+    @click="$emit('select', node)"
+  >
+    <span class="vpn-user-tree-marker">{{ isUser ? '•' : '▸' }}</span>
+    <span class="vpn-user-tree-text">{{ node.label }}</span>
+  </button>
+  <EnableUserTreeNode
+    v-for="child in node.children"
+    :key="child.key"
+    :node="child"
+    :level="level + 1"
+    :selected-id="selectedId"
+    @select="$emit('select', $event)"
+  />
+</div>

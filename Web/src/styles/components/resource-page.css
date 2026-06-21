@@ -169,6 +169,13 @@
   width: min(460px, 100%);
 }
 
+.confirm-layer-panel {
+  width: min(420px, 100%);
+  height: auto;
+  min-height: 0;
+  max-height: calc(100vh - 48px);
+}
+
 .layer-header,
 .layer-footer {
   flex: 0 0 auto;
@@ -221,6 +228,35 @@
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
+}
+
+.confirm-message {
+  display: grid;
+  gap: 10px;
+  overflow-y: auto;
+  padding: 20px;
+  color: #334155;
+  line-height: 1.6;
+}
+
+.confirm-message p {
+  margin: 0;
+}
+
+.confirm-message strong {
+  color: #111827;
+  overflow-wrap: anywhere;
+}
+
+.confirm-message p:nth-child(2) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid #fee2e2;
+  border-radius: 6px;
+  background: #fef2f2;
 }
 
 .layer-form-grid {
@@ -651,6 +687,8 @@
 .primary-button:disabled,
 .secondary-button:disabled,
 .danger-button:disabled {
+  background: #94a3b8;
+  color: #ffffff;
   cursor: not-allowed;
   opacity: 0.55;
 }
@@ -1266,6 +1304,45 @@
   overflow-x: auto;
 }
 
+.resource-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 4px 0;
+  color: #475569;
+  font-size: 14px;
+}
+
+.resource-pagination-info {
+  white-space: nowrap;
+}
+
+.advanced-paths-panel {
+  border: 1px solid #d8e1ee;
+  border-radius: 8px;
+  padding: 10px 12px 12px;
+  background: #f8fafc;
+}
+
+.advanced-paths-panel summary {
+  cursor: pointer;
+  color: #334155;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.advanced-paths-panel .layer-form-grid {
+  margin-top: 10px;
+}
+
+@media (max-width: 720px) {
+  .resource-pagination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
 table {
   width: 100%;
   min-width: 1180px;
@@ -1343,13 +1420,16 @@ tr.deleted {
   padding: 20px 12px;
 }
 
+.vpn-enable-form-row,
 .vpn-user-tree-field {
+  display: grid;
   grid-template-columns: 104px minmax(0, 1fr);
   gap: 0 12px;
   align-items: center !important;
   min-width: 0;
 }
 
+.vpn-enable-form-row > span,
 .vpn-user-tree-field > span {
   justify-self: end;
   min-height: 42px;
@@ -1362,10 +1442,42 @@ tr.deleted {
   white-space: nowrap;
 }
 
+.vpn-enable-form-row.layer-form-full {
+  grid-column: 1 / -1;
+}
+
 .vpn-user-tree-combobox {
   position: relative;
   grid-column: 2;
+  z-index: 1;
   min-width: 0;
+}
+
+.vpn-enable-layer-panel,
+.vpn-enable-layer-panel .layer-form,
+.vpn-enable-layer-panel .layer-form-grid {
+  overflow: visible;
+}
+
+.vpn-enable-layer-panel {
+  width: min(560px, calc(100vw - 48px));
+  height: auto;
+  min-height: 0;
+  max-height: calc(100vh - 48px);
+}
+
+.vpn-enable-layer-panel .layer-form-grid {
+  flex: 0 0 auto;
+  padding: 18px 20px;
+}
+
+.vpn-enable-form-grid {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+
+.vpn-enable-form-grid .vpn-user-tree-field {
+  grid-column: 1;
 }
 
 .vpn-user-tree-input {
@@ -1392,12 +1504,25 @@ tr.deleted {
 .vpn-user-tree-caret {
   position: absolute;
   top: 50%;
-  right: 12px;
+  right: 6px;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   transform: translateY(-50%);
   color: #64748b;
   font-size: 1.167em;
   line-height: 1;
-  pointer-events: none;
+  cursor: pointer;
+}
+
+.vpn-user-tree-caret:hover {
+  background: #f1f5f9;
+  color: #1f2937;
 }
 
 .vpn-user-tree-combobox.open .vpn-user-tree-caret {
@@ -1408,9 +1533,9 @@ tr.deleted {
   position: absolute;
   top: 100%;
   left: 0;
-  z-index: 3700;
+  z-index: 10000;
   width: 100%;
-  max-height: 260px;
+  max-height: clamp(180px, calc(100vh - 360px), 300px);
   overflow: auto;
   border: 1px solid #d8dee9;
   border-top: 0;
@@ -1545,11 +1670,13 @@ tr.deleted {
     align-items: stretch;
   }
 
+  .vpn-enable-form-row,
   .vpn-user-tree-field {
     grid-template-columns: 1fr;
     gap: 4px;
   }
 
+  .vpn-enable-form-row > span,
   .vpn-user-tree-field > span {
     justify-self: start;
     min-height: 0;
@@ -1557,6 +1684,10 @@ tr.deleted {
 
   .vpn-user-tree-combobox {
     grid-column: 1;
+  }
+
+  .vpn-enable-form-grid {
+    grid-template-columns: 1fr;
   }
 
   .permission-actions {
@@ -1570,6 +1701,29 @@ tr.deleted {
 
   .layer-panel {
     height: 70vh;
+    max-height: calc(100vh - 20px);
+  }
+
+  .confirm-layer-panel {
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    max-height: calc(100vh - 20px);
+  }
+
+  .confirm-layer-panel .layer-footer {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  .confirm-layer-panel .layer-footer button {
+    width: 100%;
+  }
+
+  .vpn-enable-layer-panel {
+    width: 100%;
+    height: auto;
+    min-height: 0;
     max-height: calc(100vh - 20px);
   }
 

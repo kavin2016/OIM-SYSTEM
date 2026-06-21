@@ -25,7 +25,12 @@ function extractErrorMessage(data, fallback) {
   return detail || data?.message || fallback || '请求失败'
 }
 
-export async function handleResponse(response) {
+function notifyUnauthorized(path) {
+  if (path === '/auth/token' || typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent('auth:unauthorized'))
+}
+
+export async function handleResponse(response, path = '') {
   const text = await response.text()
   let data
   try {
@@ -35,6 +40,9 @@ export async function handleResponse(response) {
   }
 
   if (!response.ok) {
+    if (response.status === 401) {
+      notifyUnauthorized(path)
+    }
     throw new Error(extractErrorMessage(data, response.statusText))
   }
 
@@ -52,7 +60,7 @@ export async function request(path, options = {}) {
       fetchOptions.method = 'POST'
     }
     const response = await fetch(buildUrl(path), fetchOptions)
-    return await handleResponse(response)
+    return await handleResponse(response, path)
   } finally {
     if (shouldShowGlobalLoading) {
       stopGlobalLoading()

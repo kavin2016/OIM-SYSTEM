@@ -46,6 +46,13 @@ export const openvpnAPI = {
   disableAccount(token, userId) {
     return authRequest(`/openvpn/accounts/${userId}/disable`, { method: 'POST', token })
   },
+  revokeAccount(token, accountId, reason = '') {
+    return authRequest(`/openvpn/accounts/${accountId}/revoke`, {
+      method: 'POST',
+      token,
+      body: { reason },
+    })
+  },
   assignAccountServer(token, accountId, serverId) {
     return authRequest(`/openvpn/accounts/${accountId}/assign-server`, {
       method: 'POST',
@@ -95,5 +102,35 @@ export const openvpnAPI = {
   },
   deleteRule(token, id) {
     return authRequest(`/openvpn/assignment-rules/${id}`, { method: 'DELETE', token })
+  },
+  getTrafficOverview(token, params = {}) {
+    return authRequest(requestPath('/openvpn/traffic/overview', params), { token })
+  },
+  getTrafficDistribution(token, params = {}) {
+    return authRequest(requestPath('/openvpn/traffic/distribution', params), { token })
+  },
+  getTrafficTrend(token, params = {}) {
+    return authRequest(requestPath('/openvpn/traffic/trend', params), { token })
+  },
+  getTrafficRanking(token, params = {}) {
+    return authRequest(requestPath('/openvpn/traffic/ranking', params), { token })
+  },
+  listTrafficThresholdRules(token, params = {}) {
+    return authRequest(requestPath('/openvpn/traffic/threshold-rules', params), { token })
+  },
+  createTrafficThresholdRule(token, payload) {
+    return authRequest('/openvpn/traffic/threshold-rules', { method: 'POST', token, body: payload })
+  },
+  updateTrafficThresholdRule(token, id, payload) {
+    return authRequest(`/openvpn/traffic/threshold-rules/${id}`, { method: 'PUT', token, body: payload })
+  },
+  deleteTrafficThresholdRule(token, id) {
+    return authRequest(`/openvpn/traffic/threshold-rules/${id}`, { method: 'DELETE', token })
+  },
+  listTrafficAlerts(token, params = {}) {
+    return authRequest(requestPath('/openvpn/traffic/alerts', params), { token })
+  },
+  processTrafficAlert(token, id, note = '') {
+    return authRequest(`/openvpn/traffic/alerts/${id}/process`, { method: 'POST', token, body: { note } })
   },
 }

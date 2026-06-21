@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
@@ -9,7 +9,12 @@ ACCOUNT_STATUSES = {"pending", "enabled", "disabled", "revoked"}
 CERTIFICATE_STATUSES = {"issued", "expired", "revoked"}
 TARGET_TYPES = {"user", "department", "role", "position"}
 PROTOCOLS = {"udp", "tcp"}
-CERTIFICATE_BACKENDS = {"metadata", "local_easyrsa"}
+CERTIFICATE_BACKENDS = {"metadata", "local_easyrsa", "ssh_easyrsa"}
+TRAFFIC_DIMENSIONS = {"server", "department", "certificate"}
+TRAFFIC_PERIOD_TYPES = {"day", "month"}
+TRAFFIC_THRESHOLD_TARGET_TYPES = {"server", "certificate"}
+TRAFFIC_THRESHOLD_ACTIONS = {"notify", "disable_certificate", "manual_review"}
+TRAFFIC_ALERT_STATUSES = {"open", "processed"}
 
 
 class OpenVpnServerBase(BaseModel):
@@ -46,6 +51,10 @@ class OpenVpnServerSecretMixin(BaseModel):
     management_host: Optional[str] = None
     management_port: Optional[int] = Field(default=None, ge=1, le=65535)
     certificate_backend: str = "metadata"
+    ssh_host: Optional[str] = None
+    ssh_port: Optional[int] = Field(default=None, ge=1, le=65535)
+    ssh_user: Optional[str] = None
+    ssh_key_path: Optional[str] = None
     easy_rsa_dir: Optional[str] = None
     pki_dir: Optional[str] = None
     ca_cert_path: Optional[str] = None
@@ -59,7 +68,7 @@ class OpenVpnServerSecretMixin(BaseModel):
     def validate_certificate_backend(cls, value):
         if value in CERTIFICATE_BACKENDS:
             return value
-        raise ValueError("证书后端只能是 metadata 或 local_easyrsa")
+        raise ValueError("证书后端只能是 metadata、local_easyrsa 或 ssh_easyrsa")
 
 
 class OpenVpnServerCreate(OpenVpnServerBase, OpenVpnServerSecretMixin):
@@ -80,6 +89,10 @@ class OpenVpnServerUpdate(BaseModel):
     status: Optional[str] = None
     is_default: Optional[bool] = None
     certificate_backend: Optional[str] = None
+    ssh_host: Optional[str] = None
+    ssh_port: Optional[int] = Field(default=None, ge=1, le=65535)
+    ssh_user: Optional[str] = None
+    ssh_key_path: Optional[str] = None
     easy_rsa_dir: Optional[str] = None
     pki_dir: Optional[str] = None
     ca_cert_path: Optional[str] = None
@@ -113,10 +126,10 @@ class OpenVpnServerUpdate(BaseModel):
     def validate_certificate_backend(cls, value):
         if value is None or value in CERTIFICATE_BACKENDS:
             return value
-        raise ValueError("证书后端只能是 metadata 或 local_easyrsa")
+        raise ValueError("证书后端只能是 metadata、local_easyrsa 或 ssh_easyrsa")
 
 
-class OpenVpnServerRead(OpenVpnServerBase):
+class OpenVpnServerRead(OpenVpnServerBase, OpenVpnServerSecretMixin):
     id: int
     is_deleted: bool
     created_by: Optional[int] = None
@@ -271,6 +284,20 @@ class OpenVpnSessionRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class OpenVpnSessionEvent(BaseModel):
+    server_code: Optional[str] = None
+    server_id: Optional[int] = None
+    common_name: str
+    virtual_ip: Optional[str] = None
+    real_ip: Optional[str] = None
+    trusted_ip: Optional[str] = None
+    bytes_in: int = Field(default=0, ge=0)
+    bytes_out: int = Field(default=0, ge=0)
+    connected_at: Optional[datetime] = None
+    disconnected_at: Optional[datetime] = None
+    message: Optional[str] = None
+
+
 class OpenVpnConnectionLogRead(BaseModel):
     id: int
     server_id: Optional[int] = None
@@ -298,3 +325,139 @@ class OpenVpnResolvedServer(BaseModel):
     server: Optional[OpenVpnServerRead] = None
     assign_source: str
     assignment_rule_id: Optional[int] = None
+
+
+class OpenVpnTrafficOverview(BaseModel):
+    bytes_in: int = 0
+    bytes_out: int = 0
+    bytes_total: int = 0
+    session_count: int = 0
+    open_alert_count: int = 0
+    active_rule_count: int = 0
+
+
+class OpenVpnTrafficMetric(BaseModel):
+    dimension_type: str
+    dimension_id: Optional[int] = None
+    name: str
+    bytes_in: int = 0
+    bytes_out: int = 0
+    bytes_total: int = 0
+    session_count: int = 0
+
+
+class OpenVpnTrafficTrendItem(BaseModel):
+    period_start: date
+    bytes_in: int = 0
+    bytes_out: int = 0
+    bytes_total: int = 0
+    session_count: int = 0
+
+
+class OpenVpnTrafficThresholdRuleBase(BaseModel):
+    name: str
+    target_type: str
+    target_id: int
+    period_type: str = "day"
+    threshold_bytes: int = Field(ge=1)
+    action: str = "notify"
+    is_active: bool = True
+    remark: Optional[str] = None
+
+    @field_validator("target_type")
+    @classmethod
+    def validate_threshold_target_type(cls, value):
+        if value in TRAFFIC_THRESHOLD_TARGET_TYPES:
+            return value
+        raise ValueError("阈值对象只能是 server 或 certificate")
+
+    @field_validator("period_type")
+    @classmethod
+    def validate_period_type(cls, value):
+        if value in TRAFFIC_PERIOD_TYPES:
+            return value
+        raise ValueError("统计周期只能是 day 或 month")
+
+    @field_validator("action")
+    @classmethod
+    def validate_threshold_action(cls, value):
+        if value in TRAFFIC_THRESHOLD_ACTIONS:
+            return value
+        raise ValueError("超限策略只能是 notify、disable_certificate 或 manual_review")
+
+
+class OpenVpnTrafficThresholdRuleCreate(OpenVpnTrafficThresholdRuleBase):
+    pass
+
+
+class OpenVpnTrafficThresholdRuleUpdate(BaseModel):
+    name: Optional[str] = None
+    target_type: Optional[str] = None
+    target_id: Optional[int] = None
+    period_type: Optional[str] = None
+    threshold_bytes: Optional[int] = Field(default=None, ge=1)
+    action: Optional[str] = None
+    is_active: Optional[bool] = None
+    remark: Optional[str] = None
+
+    @field_validator("target_type")
+    @classmethod
+    def validate_threshold_target_type(cls, value):
+        if value is None or value in TRAFFIC_THRESHOLD_TARGET_TYPES:
+            return value
+        raise ValueError("阈值对象只能是 server 或 certificate")
+
+    @field_validator("period_type")
+    @classmethod
+    def validate_period_type(cls, value):
+        if value is None or value in TRAFFIC_PERIOD_TYPES:
+            return value
+        raise ValueError("统计周期只能是 day 或 month")
+
+    @field_validator("action")
+    @classmethod
+    def validate_threshold_action(cls, value):
+        if value is None or value in TRAFFIC_THRESHOLD_ACTIONS:
+            return value
+        raise ValueError("超限策略只能是 notify、disable_certificate 或 manual_review")
+
+
+class OpenVpnTrafficThresholdRuleRead(OpenVpnTrafficThresholdRuleBase):
+    id: int
+    target_name: Optional[str] = None
+    created_by: Optional[int] = None
+    created_at: datetime
+    updated_by: Optional[int] = None
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class OpenVpnTrafficAlertRead(BaseModel):
+    id: int
+    rule_id: Optional[int] = None
+    target_type: str
+    target_id: int
+    target_name: Optional[str] = None
+    server_id: Optional[int] = None
+    server_name: Optional[str] = None
+    certificate_id: Optional[int] = None
+    account_id: Optional[int] = None
+    username: Optional[str] = None
+    period_type: str
+    period_start: date
+    threshold_bytes: int
+    actual_bytes: int
+    action: str
+    status: str
+    message: Optional[str] = None
+    created_at: datetime
+    processed_by: Optional[int] = None
+    processed_at: Optional[datetime] = None
+    process_note: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class OpenVpnTrafficAlertProcess(BaseModel):
+    note: Optional[str] = None

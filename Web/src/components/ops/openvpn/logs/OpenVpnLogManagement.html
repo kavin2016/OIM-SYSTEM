@@ -1,0 +1,47 @@
+<section class="admin-panel ops-management-page">
+  <div v-if="loading" class="loading-layer">
+    <div class="loading-box">加载数据...</div>
+  </div>
+
+  <div class="query-panel">
+    <div class="query-header">
+      <div><h3>OpenVPN连接日志</h3></div>
+    </div>
+  </div>
+
+  <section class="resource-list">
+    <div class="user-template-toolbar">
+      <button v-if="can('ops:openvpn:log:export')" type="button" class="secondary-button warning-soft-button" @click="exportLogs">
+        <span class="button-icon">{{ actionIconMap.export }}</span>
+        <span>导出</span>
+      </button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>ID</th><th>用户</th><th>服务器</th><th>动作</th><th>结果</th><th>VPN IP</th><th>公网IP</th><th>时间</th><th>详情</th></tr></thead>
+        <tbody>
+          <tr v-if="loading"><td colspan="9" class="empty-cell">加载中...</td></tr>
+          <tr v-else-if="logs.length === 0"><td colspan="9" class="empty-cell">暂无数据</td></tr>
+          <tr v-for="item in logs" v-else :key="item.id">
+            <td>{{ item.id }}</td><td>{{ item.username || '-' }}</td><td>{{ item.server_name || serverName(item.server_id) }}</td><td>{{ item.action }}</td><td>{{ item.result }}</td>
+            <td>{{ item.virtual_ip || '-' }}</td><td>{{ item.real_ip || '-' }}</td><td>{{ formatDate(item.occurred_at) }}</td><td>{{ item.message || '-' }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="resource-pagination">
+      <span class="resource-pagination-info">显示 {{ openVpnPageStart(pagination, logs.length) }}-{{ openVpnPageEnd(pagination, logs.length) }} 条</span>
+      <el-pagination
+        v-model:current-page="pagination.page"
+        v-model:page-size="pagination.pageSize"
+        background
+        :disabled="loading"
+        :page-sizes="openVpnPageSizeOptions"
+        :total="openVpnPaginationTotal(pagination, logs.length)"
+        layout="sizes, prev, pager, next"
+        @size-change="changePageSize"
+        @current-change="changePage"
+      />
+    </div>
+  </section>
+</section>

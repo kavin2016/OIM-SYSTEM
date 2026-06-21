@@ -1,0 +1,37 @@
+{
+  "minimal_required": {
+    "name": "PH-8.212.172.191",
+    "code": "PH-191",
+    "region": "PH",
+    "host": "8.212.172.191",
+    "port": 1194,
+    "protocol": "udp",
+    "max_clients": 100,
+    "status": "online",
+    "is_default": false,
+    "is_active": true,
+    "certificate_backend": "ssh_easyrsa",
+    "ssh_user": "root",
+    "remark": "OpenVPN server managed by OIM"
+  },
+  "auto_filled_by_backend": {
+    "ssh_host": "defaults to host",
+    "ssh_port": 22,
+    "ssh_key_path": "OPENVPN_DEFAULT_SSH_KEY_PATH or system SSH identity",
+    "easy_rsa_dir": "OPENVPN_DEFAULT_EASY_RSA_DIR",
+    "pki_dir": "easy_rsa_dir + /pki",
+    "ca_cert_path": "pki_dir + /ca.crt",
+    "tls_crypt_key_path": "OPENVPN_DEFAULT_TLS_CRYPT_KEY_PATH",
+    "crl_path": "pki_dir + /crl.pem",
+    "client_config_dir": "OPENVPN_CLIENT_CONFIG_ROOT"
+  },
+  "optional_override_when_server_is_different": {
+    "ssh_key_path": "/path/on/oim-backend-server/to/openvpn_server_ssh_key",
+    "easy_rsa_dir": "/etc/openvpn/easy-rsa",
+    "pki_dir": "/etc/openvpn/easy-rsa/pki",
+    "ca_cert_path": "/etc/openvpn/easy-rsa/pki/ca.crt",
+    "tls_crypt_key_path": "/etc/openvpn/tls-crypt.key",
+    "crl_path": "/etc/openvpn/easy-rsa/pki/crl.pem",
+    "client_config_dir": "/data/oim/openvpn-clients"
+  }
+}

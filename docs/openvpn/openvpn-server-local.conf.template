@@ -1,0 +1,20 @@
+# OIM OpenVPN local development integration
+# Append this block to OpenVPN server config, for example:
+# /etc/openvpn/server.conf or /etc/openvpn/server/server.conf
+#
+# Local development expects an SSH reverse tunnel:
+# ssh -N -R 18080:127.0.0.1:8000 -i ~/.ssh/<ssh-key> root@<openvpn-server-ip>
+
+script-security 2
+
+# OIM Backend callback through SSH reverse tunnel.
+setenv OIM_OPENVPN_EVENT_URL http://127.0.0.1:18080
+
+# Must equal backend OPENVPN_EVENT_SECRET.
+setenv OIM_OPENVPN_EVENT_TOKEN CHANGE_ME_LOCAL_OPENVPN_EVENT_SECRET
+
+# Must equal OIM OpenVPN server code.
+setenv OIM_OPENVPN_SERVER_CODE CHANGE_ME_SERVER_CODE
+
+client-connect /etc/openvpn/oim-client-connect.sh
+client-disconnect /etc/openvpn/oim-client-disconnect.sh

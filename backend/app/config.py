@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     jwt_secret_key: str = "CHANGE_ME_SUPER_SECRET"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
+    openvpn_event_secret: Optional[str] = None
+    openvpn_client_config_root: str = "./storage/openvpn-clients"
+    openvpn_default_ssh_key_path: Optional[str] = None
+    openvpn_default_easy_rsa_dir: str = "/etc/openvpn/easy-rsa"
+    openvpn_default_tls_crypt_key_path: str = "/etc/openvpn/tls-crypt.key"
     initial_admin_username: Optional[str] = "admin"
     initial_admin_email: Optional[str] = "admin@example.com"
     initial_admin_password: Optional[str] = "admin"

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, Column, Date, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from ..database import Base
@@ -23,6 +23,10 @@ class OpenVpnServer(Base):
     status = Column(String(32), default="disabled", nullable=False, comment="状态")
     is_default = Column(Boolean, default=False, nullable=False, comment="是否默认服务器")
     certificate_backend = Column(String(32), default="metadata", nullable=False, comment="证书后端：metadata/local_easyrsa")
+    ssh_host = Column(String(255), nullable=True, comment="证书服务器SSH地址")
+    ssh_port = Column(Integer, nullable=True, comment="证书服务器SSH端口")
+    ssh_user = Column(String(128), nullable=True, comment="证书服务器SSH用户")
+    ssh_key_path = Column(String(512), nullable=True, comment="证书服务器SSH私钥路径")
     easy_rsa_dir = Column(String(512), nullable=True, comment="Easy-RSA目录")
     pki_dir = Column(String(512), nullable=True, comment="PKI目录")
     ca_cert_path = Column(String(512), nullable=True, comment="CA证书路径")
@@ -129,13 +133,19 @@ class OpenVpnSession(Base):
     real_ip = Column(String(64), nullable=True, comment="公网IP")
     connected_at = Column(DateTime, default=datetime.utcnow, nullable=False, comment="连接时间")
     disconnected_at = Column(DateTime, nullable=True, comment="断开时间")
-    bytes_in = Column(Integer, default=0, nullable=False, comment="入站流量")
-    bytes_out = Column(Integer, default=0, nullable=False, comment="出站流量")
+    bytes_in = Column(BigInteger, default=0, nullable=False, comment="入站流量")
+    bytes_out = Column(BigInteger, default=0, nullable=False, comment="出站流量")
     status = Column(String(32), default="online", nullable=False, comment="状态")
 
 
 class OpenVpnConnectionLog(Base):
     __tablename__ = "openvpn_connection_logs"
+    __table_args__ = (
+        Index("ix_openvpn_logs_server_id_id", "server_id", "id"),
+        Index("ix_openvpn_logs_user_id_id", "user_id", "id"),
+        Index("ix_openvpn_logs_action_id", "action", "id"),
+        Index("ix_openvpn_logs_occurred_id", "occurred_at", "id"),
+    )
 
     id = Column(Integer, primary_key=True, index=True, comment="OpenVPN连接日志ID")
     server_id = Column(Integer, ForeignKey("openvpn_servers.id", ondelete="SET NULL"), nullable=True, comment="服务器ID")
@@ -148,3 +158,95 @@ class OpenVpnConnectionLog(Base):
     message = Column(Text, nullable=True, comment="日志内容")
     extra = Column(JSON, nullable=True, comment="扩展信息")
     occurred_at = Column(DateTime, default=datetime.utcnow, nullable=False, comment="发生时间")
+
+
+class OpenVpnTrafficRecord(Base):
+    __tablename__ = "openvpn_traffic_records"
+    __table_args__ = (
+        UniqueConstraint("session_id", name="uq_openvpn_traffic_session"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True, comment="OpenVPN流量原始记录ID")
+    server_id = Column(Integer, ForeignKey("openvpn_servers.id", ondelete="SET NULL"), nullable=True, index=True, comment="服务器ID")
+    account_id = Column(Integer, ForeignKey("openvpn_accounts.id", ondelete="SET NULL"), nullable=True, index=True, comment="账号ID")
+    certificate_id = Column(Integer, ForeignKey("openvpn_certificates.id", ondelete="SET NULL"), nullable=True, index=True, comment="证书ID")
+    user_id = Column(Integer, ForeignKey("sys_users.id", ondelete="SET NULL"), nullable=True, index=True, comment="用户ID")
+    department_id = Column(Integer, ForeignKey("sys_departments.id", ondelete="SET NULL"), nullable=True, index=True, comment="部门ID")
+    session_id = Column(Integer, ForeignKey("openvpn_sessions.id", ondelete="SET NULL"), nullable=True, index=True, comment="会话ID")
+    common_name = Column(String(128), nullable=True, index=True, comment="证书CN")
+    virtual_ip = Column(String(64), nullable=True, comment="VPN IP")
+    real_ip = Column(String(64), nullable=True, comment="公网IP")
+    bytes_in = Column(BigInteger, default=0, nullable=False, comment="入站流量")
+    bytes_out = Column(BigInteger, default=0, nullable=False, comment="出站流量")
+    bytes_total = Column(BigInteger, default=0, nullable=False, comment="总流量")
+    recorded_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True, comment="记录时间")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, comment="创建时间")
+
+
+class OpenVpnTrafficAggregate(Base):
+    __tablename__ = "openvpn_traffic_aggregates"
+    __table_args__ = (
+        UniqueConstraint("period_type", "period_start", "dimension_type", "dimension_id", name="uq_openvpn_traffic_aggregate_dimension"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True, comment="OpenVPN流量聚合ID")
+    period_type = Column(String(16), nullable=False, index=True, comment="周期：day/month")
+    period_start = Column(Date, nullable=False, index=True, comment="周期开始日期")
+    dimension_type = Column(String(32), nullable=False, index=True, comment="维度：server/department/certificate")
+    dimension_id = Column(Integer, nullable=True, index=True, comment="维度ID")
+    server_id = Column(Integer, nullable=True, index=True, comment="服务器ID")
+    account_id = Column(Integer, nullable=True, index=True, comment="账号ID")
+    certificate_id = Column(Integer, nullable=True, index=True, comment="证书ID")
+    department_id = Column(Integer, nullable=True, index=True, comment="部门ID")
+    bytes_in = Column(BigInteger, default=0, nullable=False, comment="入站流量")
+    bytes_out = Column(BigInteger, default=0, nullable=False, comment="出站流量")
+    bytes_total = Column(BigInteger, default=0, nullable=False, comment="总流量")
+    session_count = Column(Integer, default=0, nullable=False, comment="会话数")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False, comment="更新时间")
+
+
+class OpenVpnTrafficThresholdRule(Base):
+    __tablename__ = "openvpn_traffic_threshold_rules"
+    __table_args__ = (
+        UniqueConstraint("target_type", "target_id", "period_type", name="uq_openvpn_traffic_threshold_target"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True, comment="OpenVPN流量阈值规则ID")
+    name = Column(String(100), nullable=False, comment="规则名称")
+    target_type = Column(String(32), nullable=False, index=True, comment="对象类型：server/certificate")
+    target_id = Column(Integer, nullable=False, index=True, comment="对象ID")
+    period_type = Column(String(16), nullable=False, comment="周期：day/month")
+    threshold_bytes = Column(BigInteger, nullable=False, comment="阈值字节数")
+    action = Column(String(32), default="notify", nullable=False, comment="处理策略：notify/disable_certificate/manual_review")
+    is_active = Column(Boolean, default=True, nullable=False, comment="是否启用")
+    remark = Column(Text, nullable=True, comment="备注")
+    created_by = Column(Integer, nullable=True, comment="创建人ID")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, comment="创建时间")
+    updated_by = Column(Integer, nullable=True, comment="修改人ID")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False, comment="修改时间")
+
+
+class OpenVpnTrafficAlert(Base):
+    __tablename__ = "openvpn_traffic_alerts"
+    __table_args__ = (
+        UniqueConstraint("rule_id", "period_type", "period_start", "target_type", "target_id", name="uq_openvpn_traffic_alert_period"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True, comment="OpenVPN流量告警ID")
+    rule_id = Column(Integer, ForeignKey("openvpn_traffic_threshold_rules.id", ondelete="SET NULL"), nullable=True, index=True, comment="规则ID")
+    target_type = Column(String(32), nullable=False, index=True, comment="对象类型")
+    target_id = Column(Integer, nullable=False, index=True, comment="对象ID")
+    server_id = Column(Integer, nullable=True, index=True, comment="服务器ID")
+    certificate_id = Column(Integer, nullable=True, index=True, comment="证书ID")
+    account_id = Column(Integer, nullable=True, index=True, comment="账号ID")
+    period_type = Column(String(16), nullable=False, comment="周期")
+    period_start = Column(Date, nullable=False, index=True, comment="周期开始日期")
+    threshold_bytes = Column(BigInteger, nullable=False, comment="阈值字节数")
+    actual_bytes = Column(BigInteger, nullable=False, comment="实际字节数")
+    action = Column(String(32), nullable=False, comment="处理策略")
+    status = Column(String(32), default="open", nullable=False, index=True, comment="状态：open/processed")
+    message = Column(Text, nullable=True, comment="告警内容")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, comment="创建时间")
+    processed_by = Column(Integer, nullable=True, comment="处理人ID")
+    processed_at = Column(DateTime, nullable=True, comment="处理时间")
+    process_note = Column(Text, nullable=True, comment="处理说明")

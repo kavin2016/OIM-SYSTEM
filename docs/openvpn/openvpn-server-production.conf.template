@@ -1,0 +1,18 @@
+# OIM OpenVPN production integration
+# Append this block to OpenVPN server config, for example:
+# /etc/openvpn/server.conf or /etc/openvpn/server/server.conf
+
+script-security 2
+
+# OIM Backend/API address reachable from the OpenVPN server.
+# If the backend is mounted under /api, keep /api here.
+setenv OIM_OPENVPN_EVENT_URL https://oim.example.com/api
+
+# Must equal backend OPENVPN_EVENT_SECRET.
+setenv OIM_OPENVPN_EVENT_TOKEN CHANGE_ME_PRODUCTION_OPENVPN_EVENT_SECRET
+
+# Must equal OIM OpenVPN server code.
+setenv OIM_OPENVPN_SERVER_CODE CHANGE_ME_SERVER_CODE
+
+client-connect /etc/openvpn/oim-client-connect.sh
+client-disconnect /etc/openvpn/oim-client-disconnect.sh

@@ -1,0 +1,272 @@
+<section class="admin-panel ops-management-page">
+  <div v-if="loading" class="loading-layer">
+    <div class="loading-box">加载数据...</div>
+  </div>
+
+  <div class="query-panel">
+    <div class="query-header">
+      <div><h3>OpenVPN用户管理</h3></div>
+    </div>
+  </div>
+
+  <section class="resource-list">
+    <div class="user-template-toolbar">
+      <button v-if="can('ops:openvpn:account:enable')" type="button" class="primary-button" @click="openEnableAccount">
+        <span class="button-icon">{{ actionIconMap.create }}</span>
+        <span>开通</span>
+      </button>
+      <button v-if="can('ops:openvpn:account:assign-server')" type="button" class="secondary-button success-soft-button" :disabled="selectedRows.length !== 1" @click="assignSelectedAccountServer">
+        <span class="button-icon">{{ actionIconMap.update }}</span>
+        <span>分配服务器</span>
+      </button>
+      <button v-if="can('ops:openvpn:cert:issue')" type="button" class="secondary-button" :disabled="selectedRows.length !== 1 || selectedRow?.status !== 'enabled'" @click="issueSelectedAccountCertificate">
+        <span class="button-icon">✓</span>
+        <span>签发证书</span>
+      </button>
+      <button v-if="can('ops:openvpn:cert:renew')" type="button" class="secondary-button success-soft-button" :disabled="selectedRows.length !== 1 || selectedRow?.certificate_status !== 'issued'" @click="renewSelectedCertificate">
+        <span class="button-icon">{{ actionIconMap.update }}</span>
+        <span>续期证书</span>
+      </button>
+      <button v-if="can('ops:openvpn:cert:revoke')" type="button" class="danger-button danger-soft-button" :disabled="selectedRows.length !== 1 || selectedRow?.certificate_status === 'revoked'" @click="revokeSelectedCertificate">
+        <span class="button-icon">{{ actionIconMap.delete }}</span>
+        <span>吊销证书</span>
+      </button>
+      <button v-if="can('ops:openvpn:account:revoke')" type="button" class="danger-button danger-soft-button" :disabled="selectedRows.length !== 1 || selectedRow?.status === 'revoked'" @click="revokeSelectedAccount">
+        <span class="button-icon">{{ actionIconMap.delete }}</span>
+        <span>吊销账号</span>
+      </button>
+      <button v-if="can('ops:openvpn:account:download-config')" type="button" class="secondary-button warning-soft-button" :disabled="selectedRows.length !== 1" @click="downloadSelectedAccountConfig">
+        <span class="button-icon">{{ actionIconMap.export }}</span>
+        <span>下载配置</span>
+      </button>
+      <button v-if="can('ops:openvpn:account:disable')" type="button" class="danger-button danger-soft-button" :disabled="selectedRows.length === 0" @click="disableSelectedAccounts">
+        <span class="button-icon">{{ actionIconMap.delete }}</span>
+        <span>禁用</span>
+      </button>
+    </div>
+    <form class="query-panel" @submit.prevent="searchAccounts">
+      <div class="query-body">
+        <div class="query-grid">
+          <label><span>用户</span><input v-model="accountQuery.username" type="text" /></label>
+          <label>
+            <span>服务器</span>
+            <select v-model="accountQuery.server_id">
+              <option value="">全部</option>
+              <option v-for="server in servers" :key="server.id" :value="server.id">{{ server.name }}</option>
+            </select>
+          </label>
+          <label>
+            <span>状态</span>
+            <select v-model="accountQuery.status">
+              <option value="">全部</option>
+              <option value="enabled">已启用</option>
+              <option value="disabled">已禁用</option>
+              <option value="revoked">已吊销</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div class="query-actions">
+        <button type="submit" class="primary-button" :disabled="loading">
+          <span class="button-icon">{{ actionIconMap.query }}</span>
+          <span>{{ loading ? '查询中...' : '查询' }}</span>
+        </button>
+        <button type="button" class="secondary-button" :disabled="loading" @click="resetQuery">
+          <span>↻</span>
+          <span>重置</span>
+        </button>
+      </div>
+    </form>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th class="selection-cell"><input type="checkbox" :checked="isAllRowsSelected" @change="toggleAllRows" /></th><th>ID</th><th>系统用户</th><th>VPN用户名</th><th>服务器</th><th>VPN状态</th><th>证书状态</th><th>证书序列号</th><th>到期时间</th><th>最近连接</th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-if="loading"><td colspan="11" class="empty-cell">加载中...</td></tr>
+          <tr v-else-if="accounts.length === 0"><td colspan="11" class="empty-cell">暂无数据</td></tr>
+          <tr v-for="item in accounts" v-else :key="item.id">
+            <td class="selection-cell"><input type="checkbox" :checked="selectedRowIds.includes(item.id)" @change="toggleRowSelection(item)" /></td>
+            <td>{{ item.id }}</td>
+            <td>{{ item.username }}<br /><small>{{ item.nickname || '-' }}</small></td>
+            <td>{{ item.vpn_username }}</td>
+            <td>{{ item.server_name || '-' }}</td>
+            <td><span class="status-pill" :class="{ off: item.status !== 'enabled' }">{{ statusText(item.status) }}</span></td>
+            <td>{{ statusText(item.certificate_status) }}</td>
+            <td>{{ item.certificate_serial_number || '-' }}</td>
+            <td>{{ formatDate(item.certificate_expires_at) }}</td>
+            <td>{{ formatDate(item.last_connected_at) }}</td>
+            <td class="action-cell">
+              <button v-if="can('ops:openvpn:account:assign-server')" type="button" class="secondary-button" @click="openAssignServer(item)">分配服务器</button>
+              <button v-if="can('ops:openvpn:cert:issue')" type="button" class="secondary-button" :disabled="item.status !== 'enabled'" @click="issueCertificate(item)">签发证书</button>
+              <button v-if="can('ops:openvpn:cert:renew')" type="button" class="secondary-button" :disabled="item.certificate_status !== 'issued'" @click="renewAccountCertificate(item)">续期</button>
+              <button v-if="can('ops:openvpn:cert:revoke')" type="button" class="danger-button" :disabled="item.certificate_status === 'revoked'" @click="revokeAccountCertificate(item)">吊销证书</button>
+              <button v-if="can('ops:openvpn:account:revoke')" type="button" class="danger-button" :disabled="item.status === 'revoked'" @click="revokeAccount(item)">吊销账号</button>
+              <button v-if="can('ops:openvpn:account:download-config')" type="button" class="secondary-button" @click="downloadConfig(item)">下载配置</button>
+              <button v-if="can('ops:openvpn:account:disable')" type="button" class="danger-button" :disabled="item.status !== 'enabled'" @click="disableAccount(item)">禁用</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="resource-pagination">
+      <span class="resource-pagination-info">显示 {{ openVpnPageStart(pagination, accounts.length) }}-{{ openVpnPageEnd(pagination, accounts.length) }} 条</span>
+      <el-pagination
+        v-model:current-page="pagination.page"
+        v-model:page-size="pagination.pageSize"
+        background
+        :disabled="loading"
+        :page-sizes="openVpnPageSizeOptions"
+        :total="openVpnPaginationTotal(pagination, accounts.length)"
+        layout="sizes, prev, pager, next"
+        @size-change="changePageSize"
+        @current-change="changePage"
+      />
+    </div>
+  </section>
+
+  <div v-if="enableLayer.visible" class="layer-mask">
+    <section class="layer-panel layer-panel-small vpn-enable-layer-panel" role="dialog" aria-modal="true">
+      <header class="layer-header"><h3>开通VPN账号</h3><button type="button" class="text-button icon-only-button" aria-label="关闭" title="关闭" @click="enableLayer.visible = false">×</button></header>
+      <form class="layer-form" @submit.prevent="enableAccount">
+        <div class="layer-form-grid vpn-enable-form-grid">
+          <div class="vpn-user-tree-field">
+            <span>用户</span>
+            <div
+              class="vpn-user-tree-combobox"
+              :class="{ open: enableUserDropdownVisible }"
+              @focusout="closeEnableUserDropdown"
+            >
+              <input
+                v-model="enableUserKeyword"
+                class="vpn-user-tree-input"
+                type="text"
+                placeholder="输入用户名或昵称快速查找"
+                autocomplete="off"
+                @focus="openEnableUserDropdown"
+                @click="openEnableUserDropdown"
+                @input="openEnableUserDropdown"
+              />
+              <button
+                type="button"
+                class="vpn-user-tree-caret"
+                aria-label="展开用户列表"
+                :aria-expanded="enableUserDropdownVisible"
+                @mousedown.prevent
+                @click="openEnableUserDropdown"
+              >
+                ⌄
+              </button>
+              <div v-if="enableUserDropdownVisible" class="vpn-user-tree-panel">
+                <div v-if="enableUserTree.length === 0" class="vpn-user-tree-empty">暂无匹配用户</div>
+                <EnableUserTreeNode
+                  v-for="node in enableUserTree"
+                  :key="node.key"
+                  :node="node"
+                  :selected-id="enableLayer.user_id"
+                  @select="selectEnableUser"
+                />
+              </div>
+              <input v-model="enableLayer.user_id" class="visually-hidden" required />
+            </div>
+          </div>
+        </div>
+        <footer class="layer-footer"><button type="button" class="secondary-button" @click="enableLayer.visible = false">取消</button><button type="submit" class="primary-button">开通</button></footer>
+      </form>
+    </section>
+  </div>
+
+  <div v-if="revokeCertificateLayer.visible" class="layer-mask">
+    <section class="layer-panel layer-panel-small confirm-layer-panel" role="dialog" aria-modal="true">
+      <header class="layer-header">
+        <h3>吊销证书确认</h3>
+        <button
+          type="button"
+          class="text-button icon-only-button"
+          aria-label="关闭"
+          title="关闭"
+          :disabled="revokeCertificateLayer.submitting"
+          @click="closeRevokeCertificateLayer"
+        >×</button>
+      </header>
+      <div class="layer-form">
+        <div class="confirm-message">
+          <p>确认要吊销该用户的 OpenVPN 证书吗？</p>
+          <p>
+            <strong>{{ revokeCertificateLayer.row?.username || '-' }}</strong>
+            <span> / {{ revokeCertificateLayer.row?.vpn_username || '-' }}</span>
+          </p>
+          <p>吊销后该证书将不能继续用于 VPN 连接。</p>
+        </div>
+        <footer class="layer-footer">
+          <button
+            type="button"
+            class="secondary-button"
+            :disabled="revokeCertificateLayer.submitting"
+            @click="closeRevokeCertificateLayer"
+          >取消</button>
+          <button
+            type="button"
+            class="danger-button"
+            :disabled="revokeCertificateLayer.submitting"
+            @click="confirmRevokeCertificate"
+          >{{ revokeCertificateLayer.submitting ? '吊销中...' : '确认吊销' }}</button>
+        </footer>
+      </div>
+    </section>
+  </div>
+
+  <div v-if="revokeAccountLayer.visible" class="layer-mask">
+    <section class="layer-panel layer-panel-small confirm-layer-panel" role="dialog" aria-modal="true">
+      <header class="layer-header">
+        <h3>吊销用户确认</h3>
+        <button
+          type="button"
+          class="text-button icon-only-button"
+          aria-label="关闭"
+          title="关闭"
+          :disabled="revokeAccountLayer.submitting"
+          @click="closeRevokeAccountLayer"
+        >×</button>
+      </header>
+      <div class="layer-form">
+        <div class="confirm-message">
+          <p>确认要吊销该用户的 VPN 账号吗？</p>
+          <p>
+            <strong>{{ revokeAccountLayer.row?.username || '-' }}</strong>
+            <span> / {{ revokeAccountLayer.row?.vpn_username || '-' }}</span>
+          </p>
+          <p>吊销后会同步吊销当前有效证书，并关闭该用户的在线会话。</p>
+        </div>
+        <footer class="layer-footer">
+          <button
+            type="button"
+            class="secondary-button"
+            :disabled="revokeAccountLayer.submitting"
+            @click="closeRevokeAccountLayer"
+          >取消</button>
+          <button
+            type="button"
+            class="danger-button"
+            :disabled="revokeAccountLayer.submitting"
+            @click="confirmRevokeAccount"
+          >{{ revokeAccountLayer.submitting ? '吊销中...' : '确认吊销' }}</button>
+        </footer>
+      </div>
+    </section>
+  </div>
+
+  <div v-if="assignLayer.visible" class="layer-mask">
+    <section class="layer-panel layer-panel-small" role="dialog" aria-modal="true">
+      <header class="layer-header"><h3>分配服务器</h3><button type="button" class="text-button icon-only-button" aria-label="关闭" title="关闭" @click="assignLayer.visible = false">×</button></header>
+      <form class="layer-form" @submit.prevent="assignServer">
+        <div class="layer-form-grid layer-form-grid-single">
+          <label><span>服务器</span><select v-model="assignLayer.server_id"><option value="">按策略重新计算</option><option v-for="server in servers" :key="server.id" :value="server.id">{{ server.name }}</option></select></label>
+        </div>
+        <footer class="layer-footer"><button type="button" class="secondary-button" @click="assignLayer.visible = false">取消</button><button type="submit" class="primary-button">保存</button></footer>
+      </form>
+    </section>
+  </div>
+</section>

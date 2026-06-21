@@ -1,0 +1,152 @@
+<section class="admin-panel ops-management-page">
+  <div v-if="loading" class="loading-layer">
+    <div class="loading-box">加载数据...</div>
+  </div>
+
+  <div class="query-panel">
+    <div class="query-header">
+      <div><h3>OpenVPN服务器管理</h3></div>
+    </div>
+  </div>
+
+  <section class="resource-list">
+    <div class="user-template-toolbar">
+      <button v-if="can('ops:openvpn:server:create')" type="button" class="primary-button" @click="openCreateServer">
+        <span class="button-icon">{{ actionIconMap.create }}</span>
+        <span>新增</span>
+      </button>
+      <button v-if="can('ops:openvpn:server:update')" type="button" class="secondary-button success-soft-button" :disabled="selectedRows.length !== 1" @click="editSelectedServer">
+        <span class="button-icon">{{ actionIconMap.update }}</span>
+        <span>修改</span>
+      </button>
+      <button v-if="can('ops:openvpn:server:delete')" type="button" class="danger-button danger-soft-button" :disabled="selectedRows.length === 0" @click="deleteSelectedServers">
+        <span class="button-icon">{{ actionIconMap.delete }}</span>
+        <span>删除</span>
+      </button>
+      <button v-if="can('ops:openvpn:server:set-default')" type="button" class="secondary-button warning-soft-button" :disabled="selectedRows.length !== 1 || selectedRow?.is_default" @click="setDefaultSelectedServer">
+        <span class="button-icon">★</span>
+        <span>设默认</span>
+      </button>
+      <button v-if="can('ops:openvpn:server:test')" type="button" class="secondary-button" :disabled="selectedRows.length !== 1" @click="testSelectedServer">
+        <span class="button-icon">✓</span>
+        <span>测试配置</span>
+      </button>
+    </div>
+    <form class="query-panel" @submit.prevent="searchServers">
+      <div class="query-body">
+        <div class="query-grid">
+          <label><span>名称</span><input v-model="serverQuery.name" type="text" /></label>
+          <label><span>编码</span><input v-model="serverQuery.code" type="text" /></label>
+          <label><span>区域</span><input v-model="serverQuery.region" type="text" /></label>
+          <label>
+            <span>状态</span>
+            <select v-model="serverQuery.status">
+              <option value="">全部</option>
+              <option value="online">在线</option>
+              <option value="offline">离线</option>
+              <option value="maintenance">维护</option>
+              <option value="disabled">停用</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div class="query-actions">
+        <button type="submit" class="primary-button" :disabled="loading">
+          <span class="button-icon">{{ actionIconMap.query }}</span>
+          <span>{{ loading ? '查询中...' : '查询' }}</span>
+        </button>
+        <button type="button" class="secondary-button" :disabled="loading" @click="resetQuery">
+          <span>↻</span>
+          <span>重置</span>
+        </button>
+      </div>
+    </form>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th class="selection-cell"><input type="checkbox" :checked="isAllRowsSelected" @change="toggleAllRows" /></th><th>ID</th><th>名称</th><th>编码</th><th>区域</th><th>地址</th><th>协议端口</th><th>在线数</th><th>状态</th><th>默认</th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-if="loading"><td colspan="11" class="empty-cell">加载中...</td></tr>
+          <tr v-else-if="servers.length === 0"><td colspan="11" class="empty-cell">暂无数据</td></tr>
+          <tr v-for="item in servers" v-else :key="item.id" :class="{ deleted: item.is_deleted }">
+            <td class="selection-cell"><input type="checkbox" :checked="selectedRowIds.includes(item.id)" @change="toggleRowSelection(item)" /></td>
+            <td>{{ item.id }}</td>
+            <td>{{ item.name }}</td>
+            <td>{{ item.code }}</td>
+            <td>{{ item.region || '-' }}</td>
+            <td>{{ item.host }}</td>
+            <td>{{ item.protocol }}/{{ item.port }}</td>
+            <td>{{ item.current_clients }}/{{ item.max_clients || '不限' }}</td>
+            <td><span class="status-pill" :class="{ off: item.status !== 'online' }">{{ statusText(item.status) }}</span></td>
+            <td>{{ item.is_default ? '是' : '否' }}</td>
+            <td class="action-cell">
+              <button v-if="can('ops:openvpn:server:update')" type="button" class="secondary-button" @click="openEditServer(item)">编辑</button>
+              <button v-if="can('ops:openvpn:server:set-default')" type="button" class="secondary-button" :disabled="item.is_default" @click="setDefaultServer(item)">设默认</button>
+              <button v-if="can('ops:openvpn:server:delete')" type="button" class="danger-button" @click="deleteServer(item)">删除</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="resource-pagination">
+      <span class="resource-pagination-info">显示 {{ openVpnPageStart(pagination, servers.length) }}-{{ openVpnPageEnd(pagination, servers.length) }} 条</span>
+      <el-pagination
+        v-model:current-page="pagination.page"
+        v-model:page-size="pagination.pageSize"
+        background
+        :disabled="loading"
+        :page-sizes="openVpnPageSizeOptions"
+        :total="openVpnPaginationTotal(pagination, servers.length)"
+        layout="sizes, prev, pager, next"
+        @size-change="changePageSize"
+        @current-change="changePage"
+      />
+    </div>
+  </section>
+
+  <div v-if="serverDialogVisible" class="layer-mask">
+    <section class="layer-panel" role="dialog" aria-modal="true">
+      <header class="layer-header">
+        <h3>{{ editingServerId ? '编辑服务器' : '新增服务器' }}</h3>
+        <button type="button" class="text-button icon-only-button" aria-label="关闭" title="关闭" @click="serverDialogVisible = false">×</button>
+      </header>
+      <form class="layer-form" @submit.prevent="saveServer">
+        <div class="layer-form-grid">
+          <label><span>名称</span><input v-model="serverForm.name" type="text" required /></label>
+          <label><span>编码</span><input v-model="serverForm.code" type="text" required /></label>
+          <label><span>区域</span><input v-model="serverForm.region" type="text" /></label>
+          <label><span>地址</span><input v-model="serverForm.host" type="text" required /></label>
+          <label><span>端口</span><input v-model.number="serverForm.port" type="number" min="1" max="65535" required /></label>
+          <label><span>协议</span><select v-model="serverForm.protocol"><option value="udp">udp</option><option value="tcp">tcp</option></select></label>
+          <label><span>最大连接</span><input v-model.number="serverForm.max_clients" type="number" min="0" /></label>
+          <label><span>当前在线</span><input v-model.number="serverForm.current_clients" type="number" min="0" /></label>
+          <label><span>状态</span><select v-model="serverForm.status"><option value="online">在线</option><option value="offline">离线</option><option value="maintenance">维护</option><option value="disabled">停用</option></select></label>
+          <label><span>启用</span><select v-model="serverForm.is_active"><option :value="true">启用</option><option :value="false">停用</option></select></label>
+          <label><span>默认服务器</span><select v-model="serverForm.is_default"><option :value="false">否</option><option :value="true">是</option></select></label>
+          <label><span>证书后端</span><select v-model="serverForm.certificate_backend"><option value="ssh_easyrsa">远程SSH Easy-RSA</option><option value="local_easyrsa">本地Easy-RSA</option><option value="metadata">仅记录元数据</option></select></label>
+          <label><span>SSH地址</span><input v-model="serverForm.ssh_host" type="text" placeholder="默认使用公网IP/域名" /></label>
+          <label><span>SSH端口</span><input v-model.number="serverForm.ssh_port" type="number" min="1" max="65535" placeholder="22" /></label>
+          <label><span>SSH用户</span><input v-model="serverForm.ssh_user" type="text" placeholder="root 或 openvpn" /></label>
+          <details class="layer-form-full advanced-paths-panel">
+            <summary>高级路径配置（可选）</summary>
+            <div class="layer-form-grid">
+              <label><span>SSH私钥路径</span><input v-model="serverForm.ssh_key_path" type="text" placeholder="不填写则使用系统默认SSH密钥" /></label>
+              <label><span>Easy-RSA目录</span><input v-model="serverForm.easy_rsa_dir" type="text" placeholder="默认 /etc/openvpn/easy-rsa" /></label>
+              <label><span>PKI目录</span><input v-model="serverForm.pki_dir" type="text" placeholder="默认使用 Easy-RSA目录/pki" /></label>
+              <label><span>CA证书路径</span><input v-model="serverForm.ca_cert_path" type="text" placeholder="默认使用 PKI目录/ca.crt" /></label>
+              <label><span>TLS密钥路径</span><input v-model="serverForm.tls_crypt_key_path" type="text" placeholder="默认 /etc/openvpn/tls-crypt.key" /></label>
+              <label><span>CRL路径</span><input v-model="serverForm.crl_path" type="text" placeholder="默认使用 PKI目录/crl.pem" /></label>
+              <label class="layer-form-full"><span>证书输出目录</span><input v-model="serverForm.client_config_dir" type="text" placeholder="默认使用后端 OPENVPN_CLIENT_CONFIG_ROOT" /></label>
+            </div>
+          </details>
+          <label class="layer-form-full"><span>配置模板</span><textarea v-model="serverForm.config_template" rows="5" placeholder="不填写则使用系统默认客户端配置模板"></textarea></label>
+          <label><span>备注</span><textarea v-model="serverForm.remark" rows="3"></textarea></label>
+        </div>
+        <footer class="layer-footer"><button type="button" class="secondary-button" @click="serverDialogVisible = false">取消</button><button type="submit" class="primary-button">保存</button></footer>
+      </form>
+    </section>
+  </div>
+</section>

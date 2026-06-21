@@ -1,0 +1,91 @@
+<section class="admin-panel ops-management-page">
+  <div v-if="loading" class="loading-layer">
+    <div class="loading-box">加载数据...</div>
+  </div>
+
+  <div class="query-panel">
+    <div class="query-header">
+      <div><h3>OpenVPN在线会话</h3></div>
+    </div>
+  </div>
+
+  <section class="resource-list">
+    <div class="user-template-toolbar">
+      <button type="button" class="secondary-button" :disabled="loading" @click="loadSessions">
+        <span>↻</span>
+        <span>刷新</span>
+      </button>
+      <button v-if="can('ops:openvpn:session:kick')" type="button" class="danger-button danger-soft-button" :disabled="selectedRows.length !== 1 || selectedRow?.status !== 'online'" @click="kickSelectedSession">
+        <span class="button-icon">{{ actionIconMap.delete }}</span>
+        <span>强制下线</span>
+      </button>
+    </div>
+    <form class="query-panel" @submit.prevent="searchSessions">
+      <div class="query-body">
+        <div class="query-grid">
+          <label>
+            <span>服务器</span>
+            <select v-model="sessionQuery.server_id">
+              <option value="">全部</option>
+              <option v-for="server in servers" :key="server.id" :value="server.id">{{ server.name }}</option>
+            </select>
+          </label>
+          <label>
+            <span>用户</span>
+            <select v-model="sessionQuery.user_id">
+              <option value="">全部</option>
+              <option v-for="account in accounts" :key="account.id" :value="account.user_id">{{ accountLabel(account) }}</option>
+            </select>
+          </label>
+          <label>
+            <span>状态</span>
+            <select v-model="sessionQuery.status">
+              <option value="">全部</option>
+              <option value="online">在线</option>
+              <option value="offline">离线</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div class="query-actions">
+        <button type="submit" class="primary-button" :disabled="loading">
+          <span class="button-icon">{{ actionIconMap.query }}</span>
+          <span>{{ loading ? '查询中...' : '查询' }}</span>
+        </button>
+        <button type="button" class="secondary-button" :disabled="loading" @click="resetQuery">
+          <span>↻</span>
+          <span>重置</span>
+        </button>
+      </div>
+    </form>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th class="selection-cell"><input type="checkbox" :checked="isAllRowsSelected" @change="toggleAllRows" /></th><th>ID</th><th>用户</th><th>CN</th><th>服务器</th><th>VPN IP</th><th>公网IP</th><th>连接时间</th><th>断开时间</th><th>在线时长</th><th>流量 入/出</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody>
+          <tr v-if="loading"><td colspan="13" class="empty-cell">加载中...</td></tr>
+          <tr v-else-if="sessions.length === 0"><td colspan="13" class="empty-cell">暂无数据</td></tr>
+          <tr v-for="item in sessions" v-else :key="item.id">
+            <td class="selection-cell"><input type="checkbox" :checked="selectedRowIds.includes(item.id)" @change="toggleRowSelection(item)" /></td>
+            <td>{{ item.id }}</td><td>{{ item.username || '-' }}</td><td>{{ item.common_name }}</td><td>{{ item.server_name || serverName(item.server_id) }}</td><td>{{ item.virtual_ip || '-' }}</td><td>{{ item.real_ip || '-' }}</td>
+            <td>{{ formatDate(item.connected_at) }}</td><td>{{ formatDate(item.disconnected_at) }}</td><td>{{ formatDuration(item) }}</td><td>{{ formatTraffic(item) }}</td><td><span class="status-pill" :class="{ off: item.status !== 'online' }">{{ statusText(item.status) }}</span></td>
+            <td class="action-cell"><button v-if="can('ops:openvpn:session:kick')" type="button" class="danger-button" :disabled="item.status !== 'online'" @click="kickSession(item)">强制下线</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="resource-pagination">
+      <span class="resource-pagination-info">显示 {{ openVpnPageStart(pagination, sessions.length) }}-{{ openVpnPageEnd(pagination, sessions.length) }} 条</span>
+      <el-pagination
+        v-model:current-page="pagination.page"
+        v-model:page-size="pagination.pageSize"
+        background
+        :disabled="loading"
+        :page-sizes="openVpnPageSizeOptions"
+        :total="openVpnPaginationTotal(pagination, sessions.length)"
+        layout="sizes, prev, pager, next"
+        @size-change="changePageSize"
+        @current-change="changePage"
+      />
+    </div>
+  </section>
+</section>

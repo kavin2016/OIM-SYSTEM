@@ -16,6 +16,12 @@ const componentMap = {
   PositionList: () => import('../components/system/position/PositionList.vue'),
   DomainList: () => import('../components/system/domain/DomainList.vue'),
   OpenVpnManagement: () => import('../components/ops/openvpn/OpenVpnManagement.vue'),
+  OpenVpnServerManagement: () => import('../components/ops/openvpn/servers/OpenVpnServerManagement.vue'),
+  OpenVpnAccountManagement: () => import('../components/ops/openvpn/accounts/OpenVpnAccountManagement.vue'),
+  OpenVpnSessionManagement: () => import('../components/ops/openvpn/sessions/OpenVpnSessionManagement.vue'),
+  OpenVpnLogManagement: () => import('../components/ops/openvpn/logs/OpenVpnLogManagement.vue'),
+  OpenVpnRuleManagement: () => import('../components/ops/openvpn/rules/OpenVpnRuleManagement.vue'),
+  OpenVpnTrafficManagement: () => import('../components/ops/openvpn/traffic/OpenVpnTrafficManagement.vue'),
 }
 
 function routeNameFromCode(code) {
@@ -106,6 +112,11 @@ const routes = [
     path: '/profile',
     name: 'Profile',
     component: () => import('../components/user/ProfilePage.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/ops/openvpn',
+    redirect: '/ops/openvpn/servers',
     meta: { requiresAuth: true },
   },
   {

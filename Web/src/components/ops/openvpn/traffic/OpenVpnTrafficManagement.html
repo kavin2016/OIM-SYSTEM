@@ -1,0 +1,263 @@
+<section class="admin-panel ops-management-page openvpn-traffic-page">
+  <div v-if="loading" class="loading-layer">
+    <div class="loading-box">加载数据...</div>
+  </div>
+
+  <div class="query-panel">
+    <div class="query-header">
+      <div><h3>OpenVPN流量统计</h3></div>
+    </div>
+    <form class="query-body" @submit.prevent="loadTraffic">
+      <div class="query-grid">
+        <label>
+          <span>统计周期</span>
+          <select v-model="trafficQuery.period_type">
+            <option value="day">按日</option>
+            <option value="month">按月</option>
+          </select>
+        </label>
+        <label>
+          <span>统计维度</span>
+          <select v-model="trafficQuery.dimension">
+            <option value="server">按服务器</option>
+            <option value="department">按部门</option>
+            <option value="certificate">按证书</option>
+          </select>
+        </label>
+        <label>
+          <span>开始日期</span>
+          <input v-model="trafficQuery.date_from" type="date" />
+        </label>
+        <label>
+          <span>结束日期</span>
+          <input v-model="trafficQuery.date_to" type="date" />
+        </label>
+      </div>
+      <div class="query-actions">
+        <button type="submit" class="primary-button" :disabled="loading">
+          <span class="button-icon">{{ actionIconMap.query }}</span>
+          <span>{{ loading ? '查询中...' : '查询' }}</span>
+        </button>
+        <button type="button" class="secondary-button" :disabled="loading" @click="resetTrafficQuery">
+          <span>↻</span>
+          <span>重置</span>
+        </button>
+        <button type="button" class="secondary-button" :disabled="loading" @click="refreshAll">
+          <span>↻</span>
+          <span>刷新全部</span>
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <section class="traffic-summary-grid">
+    <div class="traffic-summary-item">
+      <span>总流量</span>
+      <strong>{{ formatBytes(overview.bytes_total) }}</strong>
+    </div>
+    <div class="traffic-summary-item">
+      <span>入站流量</span>
+      <strong>{{ formatBytes(overview.bytes_in) }}</strong>
+    </div>
+    <div class="traffic-summary-item">
+      <span>出站流量</span>
+      <strong>{{ formatBytes(overview.bytes_out) }}</strong>
+    </div>
+    <div class="traffic-summary-item">
+      <span>会话数</span>
+      <strong>{{ overview.session_count || 0 }}</strong>
+    </div>
+    <div class="traffic-summary-item warning">
+      <span>待处理告警</span>
+      <strong>{{ overview.open_alert_count || 0 }}</strong>
+    </div>
+    <div class="traffic-summary-item">
+      <span>启用规则</span>
+      <strong>{{ overview.active_rule_count || 0 }}</strong>
+    </div>
+  </section>
+
+  <section class="resource-list">
+    <div class="user-template-toolbar">
+      <strong>流量分布</strong>
+      <span class="toolbar-muted">{{ dimensionText(trafficQuery.dimension) }} / {{ periodText(trafficQuery.period_type) }}</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>对象</th><th>总流量</th><th>入站</th><th>出站</th><th>会话数</th><th>占比</th></tr>
+        </thead>
+        <tbody>
+          <tr v-if="distribution.length === 0"><td colspan="6" class="empty-cell">暂无数据</td></tr>
+          <tr v-for="item in distribution" v-else :key="`${item.dimension_type}-${item.dimension_id}`">
+            <td>{{ item.name }}</td>
+            <td>{{ formatBytes(item.bytes_total) }}</td>
+            <td>{{ formatBytes(item.bytes_in) }}</td>
+            <td>{{ formatBytes(item.bytes_out) }}</td>
+            <td>{{ item.session_count }}</td>
+            <td>
+              <div class="traffic-bar"><i :style="{ width: barWidth(item.bytes_total, maxDistributionBytes) }"></i></div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="traffic-two-column">
+    <div class="resource-list">
+      <div class="user-template-toolbar"><strong>日/月流量趋势</strong></div>
+      <div class="table-wrap compact-table-wrap">
+        <table>
+          <thead><tr><th>周期</th><th>总流量</th><th>入站</th><th>出站</th><th>会话数</th></tr></thead>
+          <tbody>
+            <tr v-if="trend.length === 0"><td colspan="5" class="empty-cell">暂无数据</td></tr>
+            <tr v-for="item in trend" v-else :key="item.period_start">
+              <td>{{ item.period_start }}</td>
+              <td>{{ formatBytes(item.bytes_total) }}</td>
+              <td>{{ formatBytes(item.bytes_in) }}</td>
+              <td>{{ formatBytes(item.bytes_out) }}</td>
+              <td>{{ item.session_count }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="resource-list">
+      <div class="user-template-toolbar"><strong>证书流量排行榜</strong></div>
+      <div class="table-wrap compact-table-wrap">
+        <table>
+          <thead><tr><th>证书</th><th>总流量</th><th>会话数</th><th>占比</th></tr></thead>
+          <tbody>
+            <tr v-if="ranking.length === 0"><td colspan="4" class="empty-cell">暂无数据</td></tr>
+            <tr v-for="item in ranking" v-else :key="`rank-${item.dimension_id}`">
+              <td>{{ item.name }}</td>
+              <td>{{ formatBytes(item.bytes_total) }}</td>
+              <td>{{ item.session_count }}</td>
+              <td><div class="traffic-bar"><i :style="{ width: barWidth(item.bytes_total, maxRankingBytes) }"></i></div></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="resource-list">
+    <div class="user-template-toolbar">
+      <strong>阈值告警规则</strong>
+      <button v-if="can('ops:openvpn:traffic:threshold:create')" type="button" class="primary-button" @click="openCreateRule">
+        <span class="button-icon">{{ actionIconMap.create }}</span>
+        <span>新增规则</span>
+      </button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>规则名称</th><th>对象类型</th><th>对象</th><th>周期</th><th>阈值</th><th>超限策略</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody>
+          <tr v-if="ruleLoading"><td colspan="8" class="empty-cell">加载中...</td></tr>
+          <tr v-else-if="rules.length === 0"><td colspan="8" class="empty-cell">暂无数据</td></tr>
+          <tr v-for="item in rules" v-else :key="item.id">
+            <td>{{ item.name }}</td>
+            <td>{{ dimensionText(item.target_type) }}</td>
+            <td>{{ item.target_name || item.target_id }}</td>
+            <td>{{ periodText(item.period_type) }}</td>
+            <td>{{ formatBytes(item.threshold_bytes) }}</td>
+            <td>{{ actionText(item.action) }}</td>
+            <td><span class="status-pill" :class="{ off: !item.is_active }">{{ item.is_active ? '启用' : '停用' }}</span></td>
+            <td class="action-cell">
+              <button v-if="can('ops:openvpn:traffic:threshold:update')" type="button" class="secondary-button" @click="openEditRule(item)">编辑</button>
+              <button v-if="can('ops:openvpn:traffic:threshold:delete')" type="button" class="danger-button danger-soft-button" @click="deleteRule(item)">删除</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="resource-list">
+    <div class="user-template-toolbar">
+      <strong>流量告警</strong>
+      <select v-model="alertQuery.status" class="toolbar-select" @change="loadAlerts">
+        <option value="">全部</option>
+        <option value="open">待处理</option>
+        <option value="processed">已处理</option>
+      </select>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>告警对象</th><th>服务器</th><th>用户</th><th>周期</th><th>实际流量</th><th>阈值</th><th>策略</th><th>状态</th><th>时间</th><th>操作</th></tr></thead>
+        <tbody>
+          <tr v-if="alertLoading"><td colspan="10" class="empty-cell">加载中...</td></tr>
+          <tr v-else-if="alerts.length === 0"><td colspan="10" class="empty-cell">暂无数据</td></tr>
+          <tr v-for="item in alerts" v-else :key="item.id">
+            <td>{{ item.target_name || item.target_id }}</td>
+            <td>{{ item.server_name || '-' }}</td>
+            <td>{{ item.username || '-' }}</td>
+            <td>{{ periodText(item.period_type) }} / {{ item.period_start }}</td>
+            <td>{{ formatBytes(item.actual_bytes) }}</td>
+            <td>{{ formatBytes(item.threshold_bytes) }}</td>
+            <td>{{ actionText(item.action) }}</td>
+            <td><span class="status-pill" :class="{ off: item.status === 'processed' }">{{ alertStatusText(item.status) }}</span></td>
+            <td>{{ formatDate(item.created_at) }}</td>
+            <td class="action-cell">
+              <button v-if="can('ops:openvpn:traffic:alert:process')" type="button" class="secondary-button" :disabled="item.status === 'processed'" @click="processAlert(item)">处理</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <div v-if="showRuleModal" class="modal-backdrop">
+    <div class="modal-panel openvpn-rule-modal" @click.stop>
+      <div class="modal-header">
+        <h3>{{ editingRuleId ? '编辑阈值规则' : '新增阈值规则' }}</h3>
+        <button type="button" class="modal-close icon-only-button" aria-label="关闭" @click="closeRuleModal">
+          <span aria-hidden="true">×</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <form class="layer-form" @submit.prevent="saveRule">
+          <label><span>规则名称</span><input v-model="ruleForm.name" type="text" placeholder="例如：PH服务器日流量限制" /></label>
+          <label>
+            <span>对象类型</span>
+            <select v-model="ruleForm.target_type" @change="onRuleTargetTypeChange">
+              <option value="server">服务器</option>
+              <option value="certificate">证书</option>
+            </select>
+          </label>
+          <label>
+            <span>阈值对象</span>
+            <select v-model="ruleForm.target_id">
+              <option value="">请选择</option>
+              <option v-for="item in ruleTargetOptions" :key="item.id" :value="item.id">{{ item.label }}</option>
+            </select>
+          </label>
+          <label>
+            <span>统计周期</span>
+            <select v-model="ruleForm.period_type">
+              <option value="day">按日</option>
+              <option value="month">按月</option>
+            </select>
+          </label>
+          <label><span>阈值(GB)</span><input v-model.number="ruleForm.threshold_gb" type="number" min="0.01" step="0.01" /></label>
+          <label>
+            <span>超限策略</span>
+            <select v-model="ruleForm.action">
+              <option value="notify">仅提醒</option>
+              <option value="disable_certificate">禁用证书</option>
+              <option value="manual_review">人工处理</option>
+            </select>
+          </label>
+          <label class="switch-label"><span>启用规则</span><input v-model="ruleForm.is_active" type="checkbox" /></label>
+          <label class="layer-form-full"><span>备注</span><textarea v-model="ruleForm.remark" rows="3" placeholder="可选"></textarea></label>
+          <div class="modal-actions layer-form-full">
+            <button type="button" class="secondary-button" @click="closeRuleModal">取消</button>
+            <button type="submit" class="primary-button">保存</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</section>
