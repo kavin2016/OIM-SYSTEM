@@ -134,6 +134,7 @@
             <summary>高级路径配置（可选）</summary>
             <div class="layer-form-grid">
               <label><span>SSH私钥路径</span><input v-model="serverForm.ssh_key_path" type="text" placeholder="不填写则使用系统默认SSH密钥" /></label>
+              <label class="layer-form-full"><span>SSH私钥内容</span><textarea v-model="serverForm.ssh_private_key_content" rows="5" placeholder="可选。填写后系统会写入后端容器内路径，不会保存明文内容"></textarea></label>
               <label><span>Easy-RSA目录</span><input v-model="serverForm.easy_rsa_dir" type="text" placeholder="默认 /etc/openvpn/easy-rsa" /></label>
               <label><span>PKI目录</span><input v-model="serverForm.pki_dir" type="text" placeholder="默认使用 Easy-RSA目录/pki" /></label>
               <label><span>CA证书路径</span><input v-model="serverForm.ca_cert_path" type="text" placeholder="默认使用 PKI目录/ca.crt" /></label>

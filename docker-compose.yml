@@ -31,6 +31,8 @@ services:
     restart: unless-stopped
     env_file:
       - ./backend/docker.env
+    volumes:
+      - ./data/oim:/data/oim
     environment:
       MYSQL_USER: ${MYSQL_USER:-oim}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-oim_password}

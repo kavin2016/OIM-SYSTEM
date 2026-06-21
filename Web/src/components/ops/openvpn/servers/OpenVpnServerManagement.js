@@ -134,6 +134,7 @@ export default {
         ssh_port: serverForm.ssh_port ? Number(serverForm.ssh_port) : null,
         ssh_user: serverForm.ssh_user || null,
         ssh_key_path: serverForm.ssh_key_path || null,
+        ssh_private_key_content: serverForm.ssh_private_key_content || null,
         easy_rsa_dir: serverForm.easy_rsa_dir || null,
         pki_dir: serverForm.pki_dir || null,
         ca_cert_path: serverForm.ca_cert_path || null,
@@ -147,6 +148,7 @@ export default {
       } else {
         await openvpnAPI.createServer(token.value, payload)
       }
+      serverForm.ssh_private_key_content = ''
       serverDialogVisible.value = false
       ElMessage.success('服务器已保存')
       await loadServers()

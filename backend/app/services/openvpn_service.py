@@ -78,6 +78,7 @@ class OpenVpnService(BaseService[OpenVpnServer]):
 
     def create_server(self, payload: OpenVpnServerCreate, actor_id: int) -> OpenVpnServer:
         data = self._apply_server_defaults(payload.model_dump())
+        data = self._persist_server_ssh_private_key(data)
         server = OpenVpnServer(**data, created_by=actor_id, updated_by=actor_id)
         if server.is_default:
             self._clear_default_server()
@@ -86,6 +87,7 @@ class OpenVpnService(BaseService[OpenVpnServer]):
     def update_server(self, server_id: int, payload: OpenVpnServerUpdate, actor_id: int) -> OpenVpnServer:
         server = self.get_server_required(server_id, include_deleted=True)
         update_data = payload.model_dump(exclude_unset=True)
+        update_data = self._persist_server_ssh_private_key(update_data, server)
         for field_name, value in update_data.items():
             setattr(server, field_name, value)
         self._apply_server_defaults_to_instance(server)
@@ -952,6 +954,32 @@ class OpenVpnService(BaseService[OpenVpnServer]):
             data["ssh_key_path"] = data.get("ssh_key_path") or settings.openvpn_default_ssh_key_path
         return data
 
+    def _persist_server_ssh_private_key(self, data: dict, server: Optional[OpenVpnServer] = None) -> dict:
+        private_key_content = (data.pop("ssh_private_key_content", None) or "").strip()
+        if not private_key_content:
+            return data
+
+        if "BEGIN OPENSSH PRIVATE KEY" not in private_key_content and "BEGIN RSA PRIVATE KEY" not in private_key_content:
+            raise ConflictError("SSH私钥内容格式不正确，请填写完整私钥内容")
+
+        key_path_value = data.get("ssh_key_path") or (server.ssh_key_path if server else None)
+        if not key_path_value or str(key_path_value).startswith("/Users/"):
+            key_name = self._safe_path_segment(data.get("code") or (server.code if server else "openvpn_server"))
+            default_root = Path(settings.openvpn_default_ssh_key_path).expanduser().parent if settings.openvpn_default_ssh_key_path else Path("/data/oim/ssh")
+            key_path = default_root / f"{key_name}.key"
+        else:
+            key_path = Path(str(key_path_value)).expanduser()
+
+        try:
+            key_path.parent.mkdir(parents=True, exist_ok=True)
+            key_path.write_text(private_key_content.rstrip() + "\n", encoding="utf-8")
+            key_path.chmod(0o600)
+        except OSError as exc:
+            raise ConflictError(f"SSH私钥写入失败：{key_path}，请检查后端容器挂载目录权限：{exc}") from exc
+
+        data["ssh_key_path"] = str(key_path)
+        return data
+
     def _apply_server_defaults_to_instance(self, server: OpenVpnServer) -> None:
         data = self._apply_server_defaults(
             {
@@ -1693,8 +1721,9 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         except OSError as exc:
             raise ConflictError(f"证书归档目录创建失败：{target_path.parent}，请检查后端写入权限：{exc}") from exc
         scp_command = ["scp", "-P", str(server.ssh_port or 22), "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10"]
-        if server.ssh_key_path:
-            scp_command.extend(["-i", str(Path(server.ssh_key_path).expanduser())])
+        key_path_value = self._effective_ssh_key_path(server)
+        if key_path_value:
+            scp_command.extend(["-i", str(Path(key_path_value).expanduser())])
         scp_command.extend([f"{self._ssh_target(server)}:{remote_path}", str(target_path)])
         try:
             result = subprocess.run(
@@ -1716,14 +1745,29 @@ class OpenVpnService(BaseService[OpenVpnServer]):
 
     def _ssh_base_command(self, server: OpenVpnServer) -> list[str]:
         command = ["ssh", "-p", str(server.ssh_port or 22), "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10"]
-        if server.ssh_key_path:
-            key_path = Path(server.ssh_key_path).expanduser()
+        key_path_value = self._effective_ssh_key_path(server)
+        if key_path_value:
+            key_path = Path(key_path_value).expanduser()
             if not key_path.exists():
-                raise ConflictError(f"SSH私钥文件不存在：{key_path}。请确认该路径是后端生产环境内可访问的路径")
+                raise ConflictError(
+                    f"SSH私钥文件不存在：{key_path}。请确认该路径是后端生产环境内可访问的路径；"
+                    "如果服务器记录里仍是开发机路径，请在服务器管理中修改或清空SSH私钥路径"
+                )
             if not key_path.is_file():
                 raise ConflictError(f"SSH私钥路径不是文件：{key_path}")
             command.extend(["-i", str(key_path)])
         return command
+
+    def _effective_ssh_key_path(self, server: OpenVpnServer) -> Optional[str]:
+        if not server.ssh_key_path:
+            return settings.openvpn_default_ssh_key_path
+        key_path = Path(server.ssh_key_path).expanduser()
+        if key_path.exists():
+            return str(key_path)
+        default_key_path = Path(settings.openvpn_default_ssh_key_path).expanduser() if settings.openvpn_default_ssh_key_path else None
+        if default_key_path and default_key_path.exists():
+            return str(default_key_path)
+        return server.ssh_key_path
 
     def _ssh_target(self, server: OpenVpnServer) -> str:
         if not server.ssh_user:

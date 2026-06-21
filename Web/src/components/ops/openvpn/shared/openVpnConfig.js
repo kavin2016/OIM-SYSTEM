@@ -46,6 +46,7 @@ export function emptyOpenVpnServerForm() {
     ssh_port: 22,
     ssh_user: '',
     ssh_key_path: '',
+    ssh_private_key_content: '',
     easy_rsa_dir: '',
     pki_dir: '',
     ca_cert_path: '',

@@ -83,6 +83,8 @@ OPENVPN_CLIENT_CONFIG_ROOT/服务器编码/部门编码/用户名/
 
 如果某台 OpenVPN 服务器路径与默认值不同，再在页面高级字段中单独覆盖。
 
+创建或编辑 OpenVPN 服务器时，也可以在“高级路径配置（可选）”中填写 `SSH私钥内容`。系统会把私钥写入后端容器可访问的路径，并只在数据库中保存私钥文件路径，不保存私钥明文。
+
 ## 服务器端脚本路径建议
 
 建议统一放在：
@@ -159,6 +161,21 @@ OIM_OPENVPN_SERVER_CODE=<SERVER_CODE> \
 
    ```bash
    ls -l <OPENVPN_DEFAULT_SSH_KEY_PATH>
+   ```
+
+   如果服务器管理里已经保存了开发机路径，例如 `/Users/kavin/.ssh/openvpn_ph_191`，需要在页面里清空该字段或改为容器内路径：
+
+   ```text
+   /data/oim/ssh/openvpn_ph_191
+   ```
+
+   也可以直接执行 SQL 修正已有记录：
+
+   ```sql
+   UPDATE openvpn_servers
+   SET ssh_key_path = '/data/oim/ssh/openvpn_ph_191'
+   WHERE certificate_backend = 'ssh_easyrsa'
+     AND ssh_key_path LIKE '/Users/%';
    ```
 
 3. 后端运行用户是否能读取 SSH 私钥。

@@ -72,7 +72,7 @@ class OpenVpnServerSecretMixin(BaseModel):
 
 
 class OpenVpnServerCreate(OpenVpnServerBase, OpenVpnServerSecretMixin):
-    pass
+    ssh_private_key_content: Optional[str] = None
 
 
 class OpenVpnServerUpdate(BaseModel):
@@ -100,6 +100,7 @@ class OpenVpnServerUpdate(BaseModel):
     crl_path: Optional[str] = None
     client_config_dir: Optional[str] = None
     config_template: Optional[str] = None
+    ssh_private_key_content: Optional[str] = None
     remark: Optional[str] = None
     is_active: Optional[bool] = None
     is_deleted: Optional[bool] = None

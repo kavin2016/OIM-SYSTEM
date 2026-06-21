@@ -8,6 +8,12 @@
 !.env.example
 backend/docker.env
 backend/storage/
+data/oim/**
+!data/oim/
+!data/oim/ssh/
+!data/oim/openvpn-clients/
+!data/oim/ssh/.gitkeep
+!data/oim/openvpn-clients/.gitkeep
 
 # Python
 __pycache__/
