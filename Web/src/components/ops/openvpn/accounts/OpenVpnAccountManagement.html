@@ -172,6 +172,13 @@
               <input v-model="enableLayer.user_id" class="visually-hidden" required />
             </div>
           </div>
+          <label>
+            <span>服务器</span>
+            <select v-model="enableLayer.server_id" required>
+              <option value="">请选择服务器</option>
+              <option v-for="server in servers" :key="server.id" :value="server.id">{{ server.name }}</option>
+            </select>
+          </label>
         </div>
         <footer class="layer-footer"><button type="button" class="secondary-button" @click="enableLayer.visible = false">取消</button><button type="submit" class="primary-button">开通</button></footer>
       </form>

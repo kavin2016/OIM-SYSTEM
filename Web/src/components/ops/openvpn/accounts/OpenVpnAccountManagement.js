@@ -239,7 +239,17 @@ export default {
     }
 
     async function enableAccount() {
-      await openvpnAPI.enableAccount(token.value, enableLayer.user_id, {})
+      if (!enableLayer.user_id) {
+        ElMessage.warning('请选择用户')
+        return
+      }
+      if (!enableLayer.server_id) {
+        ElMessage.warning('请选择服务器')
+        return
+      }
+      await openvpnAPI.enableAccount(token.value, enableLayer.user_id, {
+        server_id: Number(enableLayer.server_id),
+      })
       enableLayer.visible = false
       ElMessage.success('VPN账号已开通')
       await loadAccounts()

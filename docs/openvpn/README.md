@@ -143,3 +143,51 @@ OIM_OPENVPN_SERVER_CODE=<SERVER_CODE> \
 ```
 
 验证通过后，系统里应出现在线会话、连接日志和断开流量记录。
+
+## 生产环境证书签发排查
+
+如果发布到线上后签发证书报错，请优先检查：
+
+1. 后端容器/服务器是否安装了 `ssh` 和 `scp`
+
+   ```bash
+   which ssh
+   which scp
+   ```
+
+2. `SSH私钥路径` 是否是后端生产环境内可访问的路径，而不是开发电脑路径。
+
+   ```bash
+   ls -l <OPENVPN_DEFAULT_SSH_KEY_PATH>
+   ```
+
+3. 后端运行用户是否能读取 SSH 私钥。
+
+   ```bash
+   chmod 600 <OPENVPN_DEFAULT_SSH_KEY_PATH>
+   ```
+
+4. 后端是否能免密登录 OpenVPN 服务器。
+
+   ```bash
+   ssh -i <OPENVPN_DEFAULT_SSH_KEY_PATH> -p 22 root@<openvpn-server-ip> 'cd /etc/openvpn/easy-rsa && ./easyrsa --version'
+   ```
+
+5. 证书归档根目录是否可写。
+
+   ```bash
+   mkdir -p <OPENVPN_CLIENT_CONFIG_ROOT>
+   touch <OPENVPN_CLIENT_CONFIG_ROOT>/.write-test
+   rm -f <OPENVPN_CLIENT_CONFIG_ROOT>/.write-test
+   ```
+
+6. 服务器管理中的路径是否存在：
+
+   ```bash
+   test -x /etc/openvpn/easy-rsa/easyrsa
+   test -d /etc/openvpn/easy-rsa/pki
+   test -f /etc/openvpn/easy-rsa/pki/ca.crt
+   test -f /etc/openvpn/tls-crypt.key
+   ```
+
+生产镜像需要包含 `openssh-client`，否则远程 Easy-RSA 签发无法执行 SSH/SCP。

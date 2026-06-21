@@ -1435,7 +1435,10 @@ class OpenVpnService(BaseService[OpenVpnServer]):
             return cert_info
 
         target_dir = self._account_certificate_dir(server, account)
-        target_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise ConflictError(f"证书归档目录创建失败：{target_dir}，请检查后端写入权限：{exc}") from exc
         archived_info = dict(cert_info)
         basename = self._account_certificate_basename(server, account)
 
@@ -1452,24 +1455,36 @@ class OpenVpnService(BaseService[OpenVpnServer]):
             if not source_path.exists():
                 continue
             target_path = target_dir / filename
-            shutil.copy2(source_path, target_path)
-            if field_name == "key_path":
-                target_path.chmod(0o600)
+            try:
+                shutil.copy2(source_path, target_path)
+                if field_name == "key_path":
+                    target_path.chmod(0o600)
+            except OSError as exc:
+                raise ConflictError(f"证书文件归档失败：{target_path}，请检查后端写入权限：{exc}") from exc
             archived_info[field_name] = str(target_path)
 
         ca_source = Path(server.ca_cert_path).expanduser() if server.ca_cert_path else self._server_pki_dir(server) / "ca.crt"
         if ca_source.exists():
-            shutil.copy2(ca_source, target_dir / "ca.crt")
+            try:
+                shutil.copy2(ca_source, target_dir / "ca.crt")
+            except OSError as exc:
+                raise ConflictError(f"CA证书归档失败：{exc}") from exc
         if server.tls_crypt_key_path:
             tls_source = Path(server.tls_crypt_key_path).expanduser()
             if tls_source.exists():
-                shutil.copy2(tls_source, target_dir / "tls.key")
+                try:
+                    shutil.copy2(tls_source, target_dir / "tls.key")
+                except OSError as exc:
+                    raise ConflictError(f"TLS密钥归档失败：{exc}") from exc
 
         return archived_info
 
     def _archive_remote_certificate_files(self, server: OpenVpnServer, account: OpenVpnAccount, cert_info: dict) -> dict:
         target_dir = self._account_certificate_dir(server, account)
-        target_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise ConflictError(f"证书归档目录创建失败：{target_dir}，请检查后端写入权限：{exc}") from exc
         archived_info = dict(cert_info)
         basename = self._account_certificate_basename(server, account)
         file_map = {
@@ -1653,31 +1668,48 @@ class OpenVpnService(BaseService[OpenVpnServer]):
 
     def _run_remote_shell(self, server: OpenVpnServer, command: str, capture: bool = False) -> str:
         ssh_command = [*self._ssh_base_command(server), self._ssh_target(server), command]
-        result = subprocess.run(
-            ssh_command,
-            capture_output=True,
-            text=True,
-            timeout=180,
-            check=False,
-        )
+        try:
+            result = subprocess.run(
+                ssh_command,
+                capture_output=True,
+                text=True,
+                timeout=180,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            raise ConflictError("后端运行环境缺少 ssh 命令，请在生产容器/服务器中安装 openssh-client") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise ConflictError("远程SSH命令执行超时，请检查OpenVPN服务器网络连通性或Easy-RSA执行时间") from exc
+        except OSError as exc:
+            raise ConflictError(f"远程SSH命令执行失败：{exc}") from exc
         if result.returncode != 0:
             message = (result.stderr or result.stdout or "远程SSH命令执行失败").strip()
             raise ConflictError(message[-500:])
         return result.stdout.strip() if capture else ""
 
     def _scp_from_remote(self, server: OpenVpnServer, remote_path: str, target_path: Path) -> None:
-        target_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise ConflictError(f"证书归档目录创建失败：{target_path.parent}，请检查后端写入权限：{exc}") from exc
         scp_command = ["scp", "-P", str(server.ssh_port or 22), "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10"]
         if server.ssh_key_path:
             scp_command.extend(["-i", str(Path(server.ssh_key_path).expanduser())])
         scp_command.extend([f"{self._ssh_target(server)}:{remote_path}", str(target_path)])
-        result = subprocess.run(
-            scp_command,
-            capture_output=True,
-            text=True,
-            timeout=180,
-            check=False,
-        )
+        try:
+            result = subprocess.run(
+                scp_command,
+                capture_output=True,
+                text=True,
+                timeout=180,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            raise ConflictError("后端运行环境缺少 scp 命令，请在生产容器/服务器中安装 openssh-client") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise ConflictError("远程证书文件拉取超时，请检查OpenVPN服务器网络连通性") from exc
+        except OSError as exc:
+            raise ConflictError(f"远程证书文件拉取失败：{exc}") from exc
         if result.returncode != 0:
             message = (result.stderr or result.stdout or "远程证书文件拉取失败").strip()
             raise ConflictError(message[-500:])
@@ -1685,7 +1717,12 @@ class OpenVpnService(BaseService[OpenVpnServer]):
     def _ssh_base_command(self, server: OpenVpnServer) -> list[str]:
         command = ["ssh", "-p", str(server.ssh_port or 22), "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10"]
         if server.ssh_key_path:
-            command.extend(["-i", str(Path(server.ssh_key_path).expanduser())])
+            key_path = Path(server.ssh_key_path).expanduser()
+            if not key_path.exists():
+                raise ConflictError(f"SSH私钥文件不存在：{key_path}。请确认该路径是后端生产环境内可访问的路径")
+            if not key_path.is_file():
+                raise ConflictError(f"SSH私钥路径不是文件：{key_path}")
+            command.extend(["-i", str(key_path)])
         return command
 
     def _ssh_target(self, server: OpenVpnServer) -> str:
@@ -1718,15 +1755,20 @@ class OpenVpnService(BaseService[OpenVpnServer]):
             import os
 
             process_env = {**os.environ, **env}
-        result = subprocess.run(
-            [str(executable), "--batch", *args],
-            cwd=str(easy_rsa_dir),
-            env=process_env,
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
-        )
+        try:
+            result = subprocess.run(
+                [str(executable), "--batch", *args],
+                cwd=str(easy_rsa_dir),
+                env=process_env,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ConflictError("Easy-RSA执行超时，请检查服务器负载或证书后端配置") from exc
+        except OSError as exc:
+            raise ConflictError(f"Easy-RSA执行失败：{exc}") from exc
         if result.returncode != 0:
             message = (result.stderr or result.stdout or "Easy-RSA执行失败").strip()
             raise ConflictError(message[-500:])
