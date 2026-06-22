@@ -7,8 +7,10 @@ from .database import get_db
 from .services.department_service import DepartmentService
 from .services.attendance_service import AttendanceService
 from .services.domain_service import DomainService
+from .services.login_log_service import LoginLogService
 from .services.menu_service import MenuService
 from .services.openvpn_service import OpenVpnService
+from .services.operation_log_service import OperationLogService
 from .services.permission_service import PermissionService
 from .services.position_service import PositionService
 from .services.role_service import RoleService
@@ -53,6 +55,14 @@ def get_openvpn_service(db: DbSession) -> OpenVpnService:
     return OpenVpnService(db)
 
 
+def get_operation_log_service(db: DbSession) -> OperationLogService:
+    return OperationLogService(db)
+
+
+def get_login_log_service(db: DbSession) -> LoginLogService:
+    return LoginLogService(db)
+
+
 UserServiceDep = Annotated[UserService, Depends(get_user_service)]
 DepartmentServiceDep = Annotated[DepartmentService, Depends(get_department_service)]
 AttendanceServiceDep = Annotated[AttendanceService, Depends(get_attendance_service)]
@@ -62,3 +72,5 @@ PositionServiceDep = Annotated[PositionService, Depends(get_position_service)]
 DomainServiceDep = Annotated[DomainService, Depends(get_domain_service)]
 MenuServiceDep = Annotated[MenuService, Depends(get_menu_service)]
 OpenVpnServiceDep = Annotated[OpenVpnService, Depends(get_openvpn_service)]
+OperationLogServiceDep = Annotated[OperationLogService, Depends(get_operation_log_service)]
+LoginLogServiceDep = Annotated[LoginLogService, Depends(get_login_log_service)]

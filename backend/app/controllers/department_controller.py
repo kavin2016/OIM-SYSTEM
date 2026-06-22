@@ -1,8 +1,8 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 
-from ..dependencies import DepartmentServiceDep
+from ..dependencies import DepartmentServiceDep, OperationLogServiceDep
 from ..schemas.department import DepartmentCreate, DepartmentRead, DepartmentUpdate
 from ..security import require_permission
 
@@ -34,11 +34,28 @@ def list_departments(
 
 @router.post("", response_model=DepartmentRead, status_code=status.HTTP_201_CREATED)
 def create_department(
+    request: Request,
     department_create: DepartmentCreate,
     department_service: DepartmentServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("system:department:create")),
 ):
-    return department_service.create_item(department_create, actor_id=current_user.id)
+    item = department_service.create_item(department_create, actor_id=current_user.id)
+    operation_log_service.record(
+        actor=current_user,
+        module="system",
+        module_name="系统管理",
+        resource_type="department",
+        resource_id=item.id,
+        resource_name=item.name,
+        action="create",
+        action_name="新增部门",
+        request=request,
+        request_body=department_create,
+        response_status=status.HTTP_201_CREATED,
+        response_params={"id": item.id, "name": item.name},
+    )
+    return item
 
 
 @router.get("/{department_id}", response_model=DepartmentRead)
@@ -53,18 +70,49 @@ def get_department(
 
 @router.put("/{department_id}", response_model=DepartmentRead)
 def update_department(
+    request: Request,
     department_id: int,
     department_update: DepartmentUpdate,
     department_service: DepartmentServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("system:department:update")),
 ):
-    return department_service.update_item(department_id, department_update, actor_id=current_user.id)
+    item = department_service.update_item(department_id, department_update, actor_id=current_user.id)
+    operation_log_service.record(
+        actor=current_user,
+        module="system",
+        module_name="系统管理",
+        resource_type="department",
+        resource_id=item.id,
+        resource_name=item.name,
+        action="update",
+        action_name="修改部门",
+        request=request,
+        request_body=department_update,
+        response_params={"id": item.id, "name": item.name},
+    )
+    return item
 
 
 @router.delete("/{department_id}", response_model=DepartmentRead)
 def disable_department(
+    request: Request,
     department_id: int,
     department_service: DepartmentServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("system:department:delete")),
 ):
-    return department_service.delete_item(department_id, actor_id=current_user.id)
+    item = department_service.delete_item(department_id, actor_id=current_user.id)
+    operation_log_service.record(
+        actor=current_user,
+        module="system",
+        module_name="系统管理",
+        resource_type="department",
+        resource_id=item.id,
+        resource_name=item.name,
+        action="delete",
+        action_name="删除部门",
+        request=request,
+        response_params={"id": item.id, "name": item.name},
+    )
+    return item

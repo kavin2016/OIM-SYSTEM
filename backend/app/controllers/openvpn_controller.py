@@ -1,9 +1,9 @@
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 
-from ..dependencies import OpenVpnServiceDep
+from ..dependencies import OpenVpnServiceDep, OperationLogServiceDep
 from ..config import settings
 from ..models.openvpn import (
     OpenVpnAccount,
@@ -140,11 +140,28 @@ def list_openvpn_options(
 
 @router.post("/servers", response_model=OpenVpnServerRead, status_code=status.HTTP_201_CREATED)
 def create_server(
+    request: Request,
     payload: OpenVpnServerCreate,
     openvpn_service: OpenVpnServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:server:create")),
 ):
-    return openvpn_service.create_server(payload, actor_id=current_user.id)
+    item = openvpn_service.create_server(payload, actor_id=current_user.id)
+    operation_log_service.record(
+        actor=current_user,
+        module="ops",
+        module_name="运维管理",
+        resource_type="openvpn_server",
+        resource_id=item.id,
+        resource_name=item.name,
+        action="create",
+        action_name="新增OpenVPN服务器",
+        request=request,
+        request_body=payload,
+        response_status=status.HTTP_201_CREATED,
+        response_params={"id": item.id, "name": item.name},
+    )
+    return item
 
 
 @router.get("/servers/{server_id}", response_model=OpenVpnServerRead)
@@ -158,39 +175,101 @@ def get_server(
 
 @router.put("/servers/{server_id}", response_model=OpenVpnServerRead)
 def update_server(
+    request: Request,
     server_id: int,
     payload: OpenVpnServerUpdate,
     openvpn_service: OpenVpnServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:server:update")),
 ):
-    return openvpn_service.update_server(server_id, payload, actor_id=current_user.id)
+    item = openvpn_service.update_server(server_id, payload, actor_id=current_user.id)
+    operation_log_service.record(
+        actor=current_user,
+        module="ops",
+        module_name="运维管理",
+        resource_type="openvpn_server",
+        resource_id=item.id,
+        resource_name=item.name,
+        action="update",
+        action_name="修改OpenVPN服务器",
+        request=request,
+        request_body=payload,
+        response_params={"id": item.id, "name": item.name},
+    )
+    return item
 
 
 @router.delete("/servers/{server_id}", response_model=OpenVpnServerRead)
 def delete_server(
+    request: Request,
     server_id: int,
     openvpn_service: OpenVpnServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:server:delete")),
 ):
-    return openvpn_service.delete_server(server_id, actor_id=current_user.id)
+    item = openvpn_service.delete_server(server_id, actor_id=current_user.id)
+    operation_log_service.record(
+        actor=current_user,
+        module="ops",
+        module_name="运维管理",
+        resource_type="openvpn_server",
+        resource_id=item.id,
+        resource_name=item.name,
+        action="delete",
+        action_name="删除OpenVPN服务器",
+        request=request,
+        response_params={"id": item.id, "name": item.name},
+    )
+    return item
 
 
 @router.post("/servers/{server_id}/set-default", response_model=OpenVpnServerRead)
 def set_default_server(
+    request: Request,
     server_id: int,
     openvpn_service: OpenVpnServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:server:set-default")),
 ):
-    return openvpn_service.set_default_server(server_id, actor_id=current_user.id)
+    item = openvpn_service.set_default_server(server_id, actor_id=current_user.id)
+    operation_log_service.record(
+        actor=current_user,
+        module="ops",
+        module_name="运维管理",
+        resource_type="openvpn_server",
+        resource_id=item.id,
+        resource_name=item.name,
+        action="set-default",
+        action_name="设置默认OpenVPN服务器",
+        request=request,
+        response_params={"id": item.id, "name": item.name},
+    )
+    return item
 
 
 @router.post("/servers/{server_id}/test")
 def test_server(
+    request: Request,
     server_id: int,
     openvpn_service: OpenVpnServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:server:test")),
 ):
-    return openvpn_service.test_server(server_id)
+    result = openvpn_service.test_server(server_id)
+    server = openvpn_service.get_server_required(server_id, include_deleted=True)
+    operation_log_service.record(
+        actor=current_user,
+        module="ops",
+        module_name="运维管理",
+        resource_type="openvpn_server",
+        resource_id=server.id,
+        resource_name=server.name,
+        action="test",
+        action_name="测试OpenVPN服务器",
+        request=request,
+        response_params=result,
+    )
+    return result
 
 
 @router.get("/assignment-rules", response_model=list[OpenVpnAssignmentRuleRead])
@@ -209,32 +288,79 @@ def list_rules(
 
 @router.post("/assignment-rules", response_model=OpenVpnAssignmentRuleRead, status_code=status.HTTP_201_CREATED)
 def create_rule(
+    request: Request,
     payload: OpenVpnAssignmentRuleCreate,
     openvpn_service: OpenVpnServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:rule:create")),
 ):
-    return openvpn_service.create_rule(payload, actor_id=current_user.id)
+    item = openvpn_service.create_rule(payload, actor_id=current_user.id)
+    operation_log_service.record(
+        actor=current_user,
+        module="ops",
+        module_name="运维管理",
+        resource_type="openvpn_rule",
+        resource_id=item.id,
+        resource_name=item.name,
+        action="create",
+        action_name="新增OpenVPN分配策略",
+        request=request,
+        request_body=payload,
+        response_status=status.HTTP_201_CREATED,
+        response_params={"id": item.id, "name": item.name},
+    )
+    return item
 
 
 @router.put("/assignment-rules/{rule_id}", response_model=OpenVpnAssignmentRuleRead)
 def update_rule(
+    request: Request,
     rule_id: int,
     payload: OpenVpnAssignmentRuleUpdate,
     openvpn_service: OpenVpnServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:rule:update")),
 ):
-    return openvpn_service.update_rule(rule_id, payload, actor_id=current_user.id)
+    item = openvpn_service.update_rule(rule_id, payload, actor_id=current_user.id)
+    operation_log_service.record(
+        actor=current_user,
+        module="ops",
+        module_name="运维管理",
+        resource_type="openvpn_rule",
+        resource_id=item.id,
+        resource_name=item.name,
+        action="update",
+        action_name="修改OpenVPN分配策略",
+        request=request,
+        request_body=payload,
+        response_params={"id": item.id, "name": item.name},
+    )
+    return item
 
 
 @router.delete("/assignment-rules/{rule_id}", response_model=OpenVpnAssignmentRuleRead)
 def delete_rule(
+    request: Request,
     rule_id: int,
     openvpn_service: OpenVpnServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:rule:delete")),
 ):
     rule = openvpn_service.get_rule_required(rule_id)
     payload = OpenVpnAssignmentRuleRead.model_validate(rule)
     openvpn_service.delete_rule(rule_id)
+    operation_log_service.record(
+        actor=current_user,
+        module="ops",
+        module_name="运维管理",
+        resource_type="openvpn_rule",
+        resource_id=payload.id,
+        resource_name=payload.name,
+        action="delete",
+        action_name="删除OpenVPN分配策略",
+        request=request,
+        response_params={"id": payload.id, "name": payload.name},
+    )
     return payload
 
 
@@ -254,41 +380,104 @@ def list_accounts(
 
 @router.post("/accounts/{user_id}/enable", response_model=OpenVpnAccountRead)
 def enable_account(
+    request: Request,
     user_id: int,
     payload: OpenVpnEnableAccount,
     openvpn_service: OpenVpnServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:account:enable")),
 ):
-    return _account_read(openvpn_service.enable_account(user_id, payload, actor_id=current_user.id))
+    item = _account_read(openvpn_service.enable_account(user_id, payload, actor_id=current_user.id))
+    operation_log_service.record(
+        actor=current_user,
+        module="ops",
+        module_name="运维管理",
+        resource_type="openvpn_account",
+        resource_id=item.id,
+        resource_name=item.vpn_username,
+        action="enable",
+        action_name="启用OpenVPN账号",
+        request=request,
+        request_body=payload,
+        response_params={"id": item.id, "vpn_username": item.vpn_username, "user_id": item.user_id},
+    )
+    return item
 
 
 @router.post("/accounts/{user_id}/disable", response_model=OpenVpnAccountRead)
 def disable_account(
+    request: Request,
     user_id: int,
     openvpn_service: OpenVpnServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:account:disable")),
 ):
-    return _account_read(openvpn_service.disable_account(user_id, actor_id=current_user.id))
+    item = _account_read(openvpn_service.disable_account(user_id, actor_id=current_user.id))
+    operation_log_service.record(
+        actor=current_user,
+        module="ops",
+        module_name="运维管理",
+        resource_type="openvpn_account",
+        resource_id=item.id,
+        resource_name=item.vpn_username,
+        action="disable",
+        action_name="禁用OpenVPN账号",
+        request=request,
+        response_params={"id": item.id, "vpn_username": item.vpn_username, "user_id": item.user_id},
+    )
+    return item
 
 
 @router.post("/accounts/{account_id}/revoke", response_model=OpenVpnAccountRead)
 def revoke_account(
+    request: Request,
     account_id: int,
     payload: OpenVpnRevokeCertificate,
     openvpn_service: OpenVpnServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:account:revoke")),
 ):
-    return _account_read(openvpn_service.revoke_account(account_id, payload.reason, actor_id=current_user.id))
+    item = _account_read(openvpn_service.revoke_account(account_id, payload.reason, actor_id=current_user.id))
+    operation_log_service.record(
+        actor=current_user,
+        module="ops",
+        module_name="运维管理",
+        resource_type="openvpn_account",
+        resource_id=item.id,
+        resource_name=item.vpn_username,
+        action="revoke",
+        action_name="吊销OpenVPN账号",
+        request=request,
+        request_body=payload,
+        response_params={"id": item.id, "vpn_username": item.vpn_username, "status": item.status},
+    )
+    return item
 
 
 @router.post("/accounts/{account_id}/assign-server", response_model=OpenVpnAccountRead)
 def assign_account_server(
+    request: Request,
     account_id: int,
     payload: OpenVpnAssignServer,
     openvpn_service: OpenVpnServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:account:assign-server")),
 ):
-    return _account_read(openvpn_service.assign_account_server(account_id, payload.server_id, actor_id=current_user.id))
+    item = _account_read(openvpn_service.assign_account_server(account_id, payload.server_id, actor_id=current_user.id))
+    operation_log_service.record(
+        actor=current_user,
+        module="ops",
+        module_name="运维管理",
+        resource_type="openvpn_account",
+        resource_id=item.id,
+        resource_name=item.vpn_username,
+        action="assign-server",
+        action_name="分配OpenVPN服务器",
+        request=request,
+        request_body=payload,
+        response_params={"id": item.id, "vpn_username": item.vpn_username, "server_id": item.server_id},
+    )
+    return item
 
 
 @router.get("/accounts/{account_id}/resolved-server", response_model=OpenVpnResolvedServer)
@@ -304,11 +493,26 @@ def get_resolved_server(
 
 @router.get("/accounts/{account_id}/download-config", response_model=OpenVpnConfigRead)
 def download_config(
+    request: Request,
     account_id: int,
     openvpn_service: OpenVpnServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:account:download-config")),
 ):
     filename, content = openvpn_service.generate_config(account_id, actor_id=current_user.id)
+    account = openvpn_service.get_account_required(account_id)
+    operation_log_service.record(
+        actor=current_user,
+        module="ops",
+        module_name="运维管理",
+        resource_type="openvpn_account",
+        resource_id=account.id,
+        resource_name=account.vpn_username,
+        action="download-config",
+        action_name="下载OpenVPN配置",
+        request=request,
+        response_params={"filename": filename, "account_id": account.id},
+    )
     return {"filename": filename, "content": content}
 
 
@@ -327,32 +531,80 @@ def list_certificates(
 
 @router.post("/accounts/{account_id}/certificates/issue", response_model=OpenVpnCertificateRead)
 def issue_certificate(
+    request: Request,
     account_id: int,
     payload: OpenVpnIssueCertificate,
     openvpn_service: OpenVpnServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:cert:issue")),
 ):
-    return _certificate_read(openvpn_service.issue_certificate(account_id, payload.resolved_expires_at(), actor_id=current_user.id))
+    item = _certificate_read(openvpn_service.issue_certificate(account_id, payload.resolved_expires_at(), actor_id=current_user.id))
+    operation_log_service.record(
+        actor=current_user,
+        module="ops",
+        module_name="运维管理",
+        resource_type="openvpn_certificate",
+        resource_id=item.id,
+        resource_name=item.common_name,
+        action="issue",
+        action_name="签发OpenVPN证书",
+        request=request,
+        request_body=payload,
+        response_params={"id": item.id, "common_name": item.common_name, "account_id": item.account_id},
+    )
+    return item
 
 
 @router.post("/certificates/{certificate_id}/revoke", response_model=OpenVpnCertificateRead)
 def revoke_certificate(
+    request: Request,
     certificate_id: int,
     payload: OpenVpnRevokeCertificate,
     openvpn_service: OpenVpnServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:cert:revoke")),
 ):
-    return _certificate_read(openvpn_service.revoke_certificate(certificate_id, payload.reason, actor_id=current_user.id))
+    item = _certificate_read(openvpn_service.revoke_certificate(certificate_id, payload.reason, actor_id=current_user.id))
+    operation_log_service.record(
+        actor=current_user,
+        module="ops",
+        module_name="运维管理",
+        resource_type="openvpn_certificate",
+        resource_id=item.id,
+        resource_name=item.common_name,
+        action="revoke",
+        action_name="吊销OpenVPN证书",
+        request=request,
+        request_body=payload,
+        response_params={"id": item.id, "common_name": item.common_name, "status": item.status},
+    )
+    return item
 
 
 @router.post("/certificates/{certificate_id}/renew", response_model=OpenVpnCertificateRead)
 def renew_certificate(
+    request: Request,
     certificate_id: int,
     payload: OpenVpnIssueCertificate,
     openvpn_service: OpenVpnServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:cert:renew")),
 ):
-    return _certificate_read(openvpn_service.renew_certificate(certificate_id, payload.resolved_expires_at(), actor_id=current_user.id))
+    item = _certificate_read(openvpn_service.renew_certificate(certificate_id, payload.resolved_expires_at(), actor_id=current_user.id))
+    operation_log_service.record(
+        actor=current_user,
+        module="ops",
+        module_name="运维管理",
+        resource_type="openvpn_certificate",
+        resource_id=item.id,
+        resource_name=item.common_name,
+        action="renew",
+        action_name="续期OpenVPN证书",
+        request=request,
+        request_body=payload,
+        response_params={"id": item.id, "common_name": item.common_name, "expires_at": item.expires_at},
+    )
+    return item
 
 
 @router.get("/traffic/overview", response_model=OpenVpnTrafficOverview)
@@ -422,32 +674,79 @@ def list_traffic_threshold_rules(
 
 @router.post("/traffic/threshold-rules", response_model=OpenVpnTrafficThresholdRuleRead, status_code=status.HTTP_201_CREATED)
 def create_traffic_threshold_rule(
+    request: Request,
     payload: OpenVpnTrafficThresholdRuleCreate,
     openvpn_service: OpenVpnServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:traffic:threshold:create")),
 ):
-    return _traffic_rule_read(openvpn_service.create_traffic_threshold_rule(payload, current_user.id), openvpn_service)
+    item = _traffic_rule_read(openvpn_service.create_traffic_threshold_rule(payload, current_user.id), openvpn_service)
+    operation_log_service.record(
+        actor=current_user,
+        module="ops",
+        module_name="运维管理",
+        resource_type="openvpn_traffic_threshold",
+        resource_id=item.id,
+        resource_name=item.name,
+        action="create",
+        action_name="新增OpenVPN流量阈值",
+        request=request,
+        request_body=payload,
+        response_status=status.HTTP_201_CREATED,
+        response_params={"id": item.id, "name": item.name},
+    )
+    return item
 
 
 @router.put("/traffic/threshold-rules/{rule_id}", response_model=OpenVpnTrafficThresholdRuleRead)
 def update_traffic_threshold_rule(
+    request: Request,
     rule_id: int,
     payload: OpenVpnTrafficThresholdRuleUpdate,
     openvpn_service: OpenVpnServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:traffic:threshold:update")),
 ):
-    return _traffic_rule_read(openvpn_service.update_traffic_threshold_rule(rule_id, payload, current_user.id), openvpn_service)
+    item = _traffic_rule_read(openvpn_service.update_traffic_threshold_rule(rule_id, payload, current_user.id), openvpn_service)
+    operation_log_service.record(
+        actor=current_user,
+        module="ops",
+        module_name="运维管理",
+        resource_type="openvpn_traffic_threshold",
+        resource_id=item.id,
+        resource_name=item.name,
+        action="update",
+        action_name="修改OpenVPN流量阈值",
+        request=request,
+        request_body=payload,
+        response_params={"id": item.id, "name": item.name},
+    )
+    return item
 
 
 @router.delete("/traffic/threshold-rules/{rule_id}", response_model=OpenVpnTrafficThresholdRuleRead)
 def delete_traffic_threshold_rule(
+    request: Request,
     rule_id: int,
     openvpn_service: OpenVpnServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:traffic:threshold:delete")),
 ):
     rule = openvpn_service.get_traffic_threshold_rule_required(rule_id)
     payload = _traffic_rule_read(rule, openvpn_service)
     openvpn_service.delete_traffic_threshold_rule(rule_id)
+    operation_log_service.record(
+        actor=current_user,
+        module="ops",
+        module_name="运维管理",
+        resource_type="openvpn_traffic_threshold",
+        resource_id=payload.id,
+        resource_name=payload.name,
+        action="delete",
+        action_name="删除OpenVPN流量阈值",
+        request=request,
+        response_params={"id": payload.id, "name": payload.name},
+    )
     return payload
 
 
@@ -466,12 +765,28 @@ def list_traffic_alerts(
 
 @router.post("/traffic/alerts/{alert_id}/process", response_model=OpenVpnTrafficAlertRead)
 def process_traffic_alert(
+    request: Request,
     alert_id: int,
     payload: OpenVpnTrafficAlertProcess,
     openvpn_service: OpenVpnServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:traffic:alert:process")),
 ):
-    return _traffic_alert_read(openvpn_service.process_traffic_alert(alert_id, payload.note, current_user.id), openvpn_service)
+    item = _traffic_alert_read(openvpn_service.process_traffic_alert(alert_id, payload.note, current_user.id), openvpn_service)
+    operation_log_service.record(
+        actor=current_user,
+        module="ops",
+        module_name="运维管理",
+        resource_type="openvpn_traffic_alert",
+        resource_id=item.id,
+        resource_name=item.target_name,
+        action="process",
+        action_name="处理OpenVPN流量告警",
+        request=request,
+        request_body=payload,
+        response_params={"id": item.id, "status": item.status, "target_name": item.target_name},
+    )
+    return item
 
 
 @router.post("/events/connect", response_model=OpenVpnSessionRead)
@@ -507,11 +822,26 @@ def list_sessions(
 
 @router.post("/sessions/{session_id}/kick", response_model=OpenVpnSessionRead)
 def kick_session(
+    request: Request,
     session_id: int,
     openvpn_service: OpenVpnServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:session:kick")),
 ):
-    return _session_read(openvpn_service.kick_session(session_id), openvpn_service)
+    item = _session_read(openvpn_service.kick_session(session_id), openvpn_service)
+    operation_log_service.record(
+        actor=current_user,
+        module="ops",
+        module_name="运维管理",
+        resource_type="openvpn_session",
+        resource_id=item.id,
+        resource_name=item.username,
+        action="kick",
+        action_name="强制下线OpenVPN会话",
+        request=request,
+        response_params={"id": item.id, "username": item.username, "server_name": item.server_name},
+    )
+    return item
 
 
 @router.get("/logs", response_model=list[OpenVpnConnectionLogRead])
@@ -530,11 +860,23 @@ def list_logs(
 
 @router.get("/logs/export", response_model=OpenVpnConfigRead)
 def export_logs(
+    request: Request,
     openvpn_service: OpenVpnServiceDep,
+    operation_log_service: OperationLogServiceDep,
     server_id: Optional[int] = None,
     user_id: Optional[int] = None,
     action: Optional[str] = None,
     current_user=Depends(require_permission("ops:openvpn:log:export")),
 ):
     filename, content = openvpn_service.export_logs_csv(server_id=server_id, user_id=user_id, action=action)
+    operation_log_service.record(
+        actor=current_user,
+        module="ops",
+        module_name="运维管理",
+        resource_type="openvpn_log",
+        action="export",
+        action_name="导出OpenVPN连接日志",
+        request=request,
+        response_params={"filename": filename, "server_id": server_id, "user_id": user_id, "action": action},
+    )
     return {"filename": filename, "content": content}

@@ -1,8 +1,8 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 
-from ..dependencies import RoleServiceDep
+from ..dependencies import OperationLogServiceDep, RoleServiceDep
 from ..schemas.permission import RolePermissionRead
 from ..schemas.role import RoleCreate, RoleRead, RoleUpdate
 from ..security import require_permission
@@ -35,11 +35,28 @@ def list_roles(
 
 @router.post("", response_model=RoleRead, status_code=status.HTTP_201_CREATED)
 def create_role(
+    request: Request,
     role_create: RoleCreate,
     role_service: RoleServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("system:role:create")),
 ):
-    return role_service.create_item(role_create, actor_id=current_user.id)
+    item = role_service.create_item(role_create, actor_id=current_user.id)
+    operation_log_service.record(
+        actor=current_user,
+        module="system",
+        module_name="系统管理",
+        resource_type="role",
+        resource_id=item.id,
+        resource_name=item.name,
+        action="create",
+        action_name="新增角色",
+        request=request,
+        request_body=role_create,
+        response_status=status.HTTP_201_CREATED,
+        response_params={"id": item.id, "name": item.name},
+    )
+    return item
 
 
 @router.get("/{role_id}", response_model=RoleRead)
@@ -63,18 +80,49 @@ def list_role_permissions(
 
 @router.put("/{role_id}", response_model=RoleRead)
 def update_role(
+    request: Request,
     role_id: int,
     role_update: RoleUpdate,
     role_service: RoleServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("system:role:update")),
 ):
-    return role_service.update_item(role_id, role_update, actor_id=current_user.id)
+    item = role_service.update_item(role_id, role_update, actor_id=current_user.id)
+    operation_log_service.record(
+        actor=current_user,
+        module="system",
+        module_name="系统管理",
+        resource_type="role",
+        resource_id=item.id,
+        resource_name=item.name,
+        action="update",
+        action_name="修改角色",
+        request=request,
+        request_body=role_update,
+        response_params={"id": item.id, "name": item.name},
+    )
+    return item
 
 
 @router.delete("/{role_id}", response_model=RoleRead)
 def disable_role(
+    request: Request,
     role_id: int,
     role_service: RoleServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("system:role:delete")),
 ):
-    return role_service.delete_item(role_id, actor_id=current_user.id)
+    item = role_service.delete_item(role_id, actor_id=current_user.id)
+    operation_log_service.record(
+        actor=current_user,
+        module="system",
+        module_name="系统管理",
+        resource_type="role",
+        resource_id=item.id,
+        resource_name=item.name,
+        action="delete",
+        action_name="删除角色",
+        request=request,
+        response_params={"id": item.id, "name": item.name},
+    )
+    return item

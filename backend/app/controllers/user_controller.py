@@ -1,9 +1,9 @@
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 
-from ..dependencies import UserServiceDep
+from ..dependencies import OperationLogServiceDep, UserServiceDep
 from ..schemas.department import DepartmentRead
 from ..schemas.position import PositionRead
 from ..schemas.role import RoleRead
@@ -28,11 +28,27 @@ def read_current_user(current_user=Depends(get_current_active_user)):
 
 @router.put("/me", response_model=UserRead)
 def update_current_user(
+    request: Request,
     user_update: UserUpdate,
     user_service: UserServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(get_current_active_user),
 ):
-    return user_service.update_user(current_user, user_update, actor_id=current_user.id)
+    item = user_service.update_user(current_user, user_update, actor_id=current_user.id)
+    operation_log_service.record(
+        actor=current_user,
+        module="system",
+        module_name="系统管理",
+        resource_type="user",
+        resource_id=item.id,
+        resource_name=item.username,
+        action="update",
+        action_name="修改个人资料",
+        request=request,
+        request_body=user_update,
+        response_params={"id": item.id, "username": item.username},
+    )
+    return item
 
 
 @router.get("", response_model=list[UserRead])
@@ -68,30 +84,77 @@ def list_users(
 
 @router.post("", response_model=UserRead, status_code=status.HTTP_201_CREATED)
 def create_user(
+    request: Request,
     user_create: UserAdminCreate,
     user_service: UserServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("system:user:create")),
 ):
-    return user_service.create_admin_user(user_create, actor_id=current_user.id)
+    item = user_service.create_admin_user(user_create, actor_id=current_user.id)
+    operation_log_service.record(
+        actor=current_user,
+        module="system",
+        module_name="系统管理",
+        resource_type="user",
+        resource_id=item.id,
+        resource_name=item.username,
+        action="create",
+        action_name="新增用户",
+        request=request,
+        request_body=user_create,
+        response_status=status.HTTP_201_CREATED,
+        response_params={"id": item.id, "username": item.username},
+    )
+    return item
 
 
 @router.post("/batch-delete", response_model=list[UserRead])
 def batch_delete_users(
+    request: Request,
     payload: UserBatchDelete,
     user_service: UserServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("system:user:delete")),
 ):
-    return user_service.delete_users(payload.user_ids, actor_id=current_user.id)
+    items = user_service.delete_users(payload.user_ids, actor_id=current_user.id)
+    operation_log_service.record(
+        actor=current_user,
+        module="system",
+        module_name="系统管理",
+        resource_type="user",
+        action="delete",
+        action_name="批量禁用用户",
+        request=request,
+        request_body=payload,
+        response_params={"ids": [item.id for item in items], "count": len(items)},
+    )
+    return items
 
 
 @router.post("/{user_id}/reset-password", response_model=UserRead)
 def reset_user_password(
+    request: Request,
     user_id: int,
     payload: UserResetPassword,
     user_service: UserServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("system:user:reset-password")),
 ):
-    return user_service.reset_password(user_id, payload.password, actor_id=current_user.id)
+    item = user_service.reset_password(user_id, payload.password, actor_id=current_user.id)
+    operation_log_service.record(
+        actor=current_user,
+        module="system",
+        module_name="系统管理",
+        resource_type="user",
+        resource_id=item.id,
+        resource_name=item.username,
+        action="reset-password",
+        action_name="重置密码",
+        request=request,
+        request_body=payload,
+        response_params={"id": item.id, "username": item.username},
+    )
+    return item
 
 
 @router.get("/{user_id}", response_model=UserRead)
@@ -133,28 +196,75 @@ def list_user_positions(
 
 @router.put("/{user_id}/roles", response_model=UserRead)
 def assign_user_roles(
+    request: Request,
     user_id: int,
     payload: UserAssignRoles,
     user_service: UserServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("system:user:assign-role")),
 ):
-    return user_service.assign_roles(user_id, payload.role_ids, actor_id=current_user.id)
+    item = user_service.assign_roles(user_id, payload.role_ids, actor_id=current_user.id)
+    operation_log_service.record(
+        actor=current_user,
+        module="system",
+        module_name="系统管理",
+        resource_type="user",
+        resource_id=item.id,
+        resource_name=item.username,
+        action="assign-role",
+        action_name="分配角色",
+        request=request,
+        request_body=payload,
+        response_params={"id": item.id, "username": item.username, "role_ids": payload.role_ids},
+    )
+    return item
 
 
 @router.put("/{user_id}", response_model=UserRead)
 def update_user(
+    request: Request,
     user_id: int,
     user_update: UserAdminUpdate,
     user_service: UserServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("system:user:update")),
 ):
-    return user_service.update_admin_user(user_id, user_update, actor_id=current_user.id)
+    item = user_service.update_admin_user(user_id, user_update, actor_id=current_user.id)
+    operation_log_service.record(
+        actor=current_user,
+        module="system",
+        module_name="系统管理",
+        resource_type="user",
+        resource_id=item.id,
+        resource_name=item.username,
+        action="update",
+        action_name="修改用户",
+        request=request,
+        request_body=user_update,
+        response_params={"id": item.id, "username": item.username},
+    )
+    return item
 
 
 @router.delete("/{user_id}", response_model=UserRead)
 def disable_user(
+    request: Request,
     user_id: int,
     user_service: UserServiceDep,
+    operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("system:user:delete")),
 ):
-    return user_service.delete_user(user_id, actor_id=current_user.id)
+    item = user_service.delete_user(user_id, actor_id=current_user.id)
+    operation_log_service.record(
+        actor=current_user,
+        module="system",
+        module_name="系统管理",
+        resource_type="user",
+        resource_id=item.id,
+        resource_name=item.username,
+        action="delete",
+        action_name="禁用用户",
+        request=request,
+        response_params={"id": item.id, "username": item.username},
+    )
+    return item

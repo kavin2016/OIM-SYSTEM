@@ -22,6 +22,8 @@ const componentMap = {
   OpenVpnLogManagement: () => import('../components/ops/openvpn/logs/OpenVpnLogManagement.vue'),
   OpenVpnRuleManagement: () => import('../components/ops/openvpn/rules/OpenVpnRuleManagement.vue'),
   OpenVpnTrafficManagement: () => import('../components/ops/openvpn/traffic/OpenVpnTrafficManagement.vue'),
+  OperationLogManagement: () => import('../components/ops/operationLogs/OperationLogManagement.vue'),
+  LoginLogManagement: () => import('../components/ops/loginLogs/LoginLogManagement.vue'),
 }
 
 function routeNameFromCode(code) {

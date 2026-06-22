@@ -1,5 +1,6 @@
 from .department import Department
 from .domain import Domain
+from .login_log import LoginLog
 from .openvpn import (
     OpenVpnAccount,
     OpenVpnAssignmentRule,
@@ -24,6 +25,7 @@ from .attendance import (
     AttendanceShift,
 )
 from .permission import Permission
+from .operation_log import OperationLog
 from .position import Position
 from .role import Role
 from .role_permission import RolePermission
@@ -44,6 +46,7 @@ __all__ = [
     "AttendanceShift",
     "Department",
     "Domain",
+    "LoginLog",
     "OpenVpnAccount",
     "OpenVpnAssignmentRule",
     "OpenVpnCertificate",
@@ -54,6 +57,7 @@ __all__ = [
     "OpenVpnTrafficAlert",
     "OpenVpnTrafficRecord",
     "OpenVpnTrafficThresholdRule",
+    "OperationLog",
     "Permission",
     "Position",
     "Role",

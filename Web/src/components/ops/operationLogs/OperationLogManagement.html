@@ -1,0 +1,163 @@
+<section class="admin-panel ops-management-page">
+  <div v-if="loading" class="loading-layer">
+    <div class="loading-box">加载数据...</div>
+  </div>
+
+  <div class="query-panel op-log-query-panel">
+    <div class="query-header">
+      <div><h3>操作日志</h3></div>
+    </div>
+    <div class="op-log-query-form" @keydown.enter.prevent="searchLogs">
+      <label><span>操作人</span><input v-model.trim="filters.operator_username" type="text" placeholder="账号" /></label>
+      <label><span>部门</span><input v-model.trim="filters.department_name" type="text" placeholder="部门名称" /></label>
+      <label>
+        <span>模块</span>
+        <select v-model="filters.module">
+          <option v-for="item in dynamicModuleOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
+        </select>
+      </label>
+      <label>
+        <span>资源类型</span>
+        <select v-model="filters.resource_type">
+          <option v-for="item in dynamicResourceTypeOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
+        </select>
+      </label>
+      <label>
+        <span>动作</span>
+        <select v-model="filters.action">
+          <option v-for="item in dynamicActionOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
+        </select>
+      </label>
+      <label>
+        <span>结果</span>
+        <select v-model="filters.result">
+          <option v-for="item in dynamicResultOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
+        </select>
+      </label>
+      <label><span>客户端IP</span><input v-model.trim="filters.client_ip" type="text" placeholder="IP" /></label>
+      <label><span>关键词</span><input v-model.trim="filters.keyword" type="text" placeholder="资源/路径/错误" /></label>
+      <label><span>开始时间</span><input v-model="filters.created_at_start" type="datetime-local" /></label>
+      <label><span>结束时间</span><input v-model="filters.created_at_end" type="datetime-local" /></label>
+      <div class="op-log-actions">
+        <button type="button" class="secondary-button" @click="applyTimeRange('today')">今天</button>
+        <button type="button" class="secondary-button" @click="applyTimeRange('7d')">近7天</button>
+        <button type="button" class="secondary-button" @click="applyTimeRange('30d')">近30天</button>
+        <button type="button" class="primary-button op-log-search-button" @click="searchLogs">查询</button>
+        <button type="button" class="secondary-button" @click="resetFilters">重置</button>
+      </div>
+    </div>
+  </div>
+
+  <section class="resource-list">
+    <div class="user-template-toolbar">
+      <button v-if="can('ops:operation-log:export')" type="button" class="secondary-button warning-soft-button" @click="exportLogs">
+        <span class="button-icon">{{ actionIconMap.export }}</span>
+        <span>导出</span>
+      </button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th><th>操作时间</th><th>操作人</th><th>部门</th><th>模块</th><th>资源</th><th>动作</th><th>结果</th><th>IP</th><th>耗时</th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-if="loading"><td colspan="11" class="empty-cell">加载中...</td></tr>
+          <tr v-else-if="logs.length === 0"><td colspan="11" class="empty-cell">暂无数据</td></tr>
+          <tr v-for="item in logs" v-else :key="item.id">
+            <td>{{ item.id }}</td>
+            <td>{{ formatDate(item.created_at) }}</td>
+            <td>{{ item.operator_username || '-' }}</td>
+            <td>{{ item.department_name || '-' }}</td>
+            <td>{{ item.module_name }}</td>
+            <td>{{ item.resource_name || item.resource_type || '-' }}</td>
+            <td>{{ item.action_name }}</td>
+            <td><span :class="['status-pill', item.result === 'success' ? 'status-active' : 'status-inactive']">{{ resultText(item.result) }}</span></td>
+            <td>{{ item.client_ip || '-' }}</td>
+            <td>{{ item.duration_ms ?? '-' }}</td>
+            <td><button v-if="can('ops:operation-log:detail')" type="button" class="text-button" @click="openDetail(item)">详情</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="resource-pagination">
+      <span class="resource-pagination-info">显示 {{ openVpnPageStart(pagination, logs.length) }}-{{ openVpnPageEnd(pagination, logs.length) }} 条</span>
+      <el-pagination
+        v-model:current-page="pagination.page"
+        v-model:page-size="pagination.pageSize"
+        background
+        :disabled="loading"
+        :page-sizes="openVpnPageSizeOptions"
+        :total="openVpnPaginationTotal(pagination, logs.length)"
+        layout="sizes, prev, pager, next"
+        @size-change="changePageSize"
+        @current-change="changePage"
+      />
+    </div>
+  </section>
+
+  <div v-if="detailVisible" class="layer-mask op-log-detail-mask" @wheel.stop @touchmove.stop>
+    <section class="layer-panel op-log-detail-panel" role="dialog" aria-modal="true" aria-label="操作日志详情" @wheel.stop @touchmove.stop>
+      <header class="op-log-detail-title">
+        <h3>操作日志详情</h3>
+        <button type="button" class="op-log-detail-close" aria-label="关闭" title="关闭" @click="detailVisible = false">×</button>
+      </header>
+      <div v-if="detailLoading" class="empty-cell">加载中...</div>
+      <div v-else-if="detail" class="op-log-detail-body">
+        <section class="op-log-detail-card">
+          <header><span class="op-log-section-icon">i</span><h4>基本信息</h4></header>
+          <div class="op-log-kv-grid">
+            <div><span>操作模块</span><strong>{{ detail.module_name || '-' }}</strong></div>
+            <div><span>业务类型</span><strong>{{ detailResourceText(detail) }}</strong></div>
+            <div><span>操作时间</span><strong>{{ formatDate(detail.created_at) }}</strong></div>
+            <div><span>执行状态</span><strong :class="['op-log-status', detail.result === 'success' ? 'success' : 'failed']">{{ resultText(detail.result) }}</strong></div>
+            <div><span>操作动作</span><strong>{{ detail.action_name || detail.action || '-' }}</strong></div>
+            <div><span>响应状态</span><strong>{{ detail.response_status || '-' }}</strong></div>
+          </div>
+        </section>
+
+        <section class="op-log-detail-card">
+          <header><span class="op-log-section-icon">♙</span><h4>操作人员</h4></header>
+          <div class="op-log-kv-grid">
+            <div><span>操作人员</span><strong>{{ detail.operator_username || '-' }}</strong></div>
+            <div><span>所属部门</span><strong>{{ detail.department_name || '-' }}</strong></div>
+            <div><span>操作地址</span><strong>{{ detail.client_ip || '-' }}</strong></div>
+            <div><span>Trace ID</span><strong class="op-log-mono">{{ detail.trace_id || '-' }}</strong></div>
+          </div>
+        </section>
+
+        <section class="op-log-detail-card">
+          <header><span class="op-log-section-icon">↗</span><h4>请求信息</h4></header>
+          <div class="op-log-kv-list">
+            <div><span>请求地址</span><strong><em :class="['op-log-method', methodClass(detail.method)]">{{ detail.method || '-' }}</em>{{ detail.path || '-' }}</strong></div>
+            <div><span>业务资源</span><strong>{{ detail.resource_name || detail.resource_type || '-' }}</strong></div>
+            <div><span>消耗时间</span><strong>{{ detail.duration_ms == null ? '-' : `${detail.duration_ms} 毫秒` }}</strong></div>
+            <div><span>User-Agent</span><strong>{{ detail.user_agent || '-' }}</strong></div>
+            <div v-if="detail.error_message"><span>错误信息</span><strong class="op-log-error">{{ detail.error_message }}</strong></div>
+          </div>
+        </section>
+
+        <section class="op-log-detail-card">
+          <header><span class="op-log-section-icon">⇧</span><h4>请求参数</h4></header>
+          <div class="op-log-code-block">
+            <button type="button" class="secondary-button op-log-copy-button" @click="copyText(formatJson(detail.request_body || detail.request_params), '请求参数')">
+              <span class="button-icon">▣</span><span>复制</span>
+            </button>
+            <pre>{{ formatJson(detail.request_body || detail.request_params) }}</pre>
+          </div>
+        </section>
+
+        <section class="op-log-detail-card">
+          <header><span class="op-log-section-icon">⇩</span><h4>返回参数</h4></header>
+          <div class="op-log-code-block">
+            <button type="button" class="secondary-button op-log-copy-button" @click="copyText(formatJson(detail.response_params), '返回参数')">
+              <span class="button-icon">▣</span><span>复制</span>
+            </button>
+            <pre>{{ formatJson(detail.response_params) }}</pre>
+          </div>
+        </section>
+      </div>
+    </section>
+  </div>
+</section>
