@@ -1,5 +1,5 @@
 import '../../../../styles/components/resource-page.css'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { token, hasPermission } from '../../../../composables/useAuth.js'
 import { openvpnAPI } from '../../../../api/openvpn.js'
@@ -26,6 +26,8 @@ export default {
     const selectedRowIds = ref([])
     const serverDialogVisible = ref(false)
     const editingServerId = ref(null)
+    const lastAutoServerCode = ref('')
+    const lastAutoServerName = ref('')
     const serverQuery = reactive({ name: '', code: '', status: '', region: '', include_disabled: true })
     const pagination = reactive(emptyOpenVpnPagination())
     const serverForm = reactive(emptyOpenVpnServerForm())
@@ -35,6 +37,11 @@ export default {
     const isAllRowsSelected = computed(
       () => servers.value.length > 0 && selectedRows.value.length === servers.value.length,
     )
+    const expectedSshKeyPath = computed(() => {
+      if (serverForm.ssh_key_path) return serverForm.ssh_key_path
+      if (!serverForm.code) return '/data/oim/ssh/<服务器编码>.key'
+      return `/data/oim/ssh/${serverForm.code}.key`
+    })
     const can = (permission) => hasPermission(permission)
     const statusText = openVpnStatusText
 
@@ -104,12 +111,16 @@ export default {
 
     function openCreateServer() {
       editingServerId.value = null
+      lastAutoServerCode.value = ''
+      lastAutoServerName.value = ''
       resetOpenVpnReactive(serverForm, emptyOpenVpnServerForm())
       serverDialogVisible.value = true
     }
 
     function openEditServer(row) {
       editingServerId.value = row.id
+      lastAutoServerCode.value = ''
+      lastAutoServerName.value = ''
       resetOpenVpnReactive(serverForm, {
         ...emptyOpenVpnServerForm(),
         ...row,
@@ -123,7 +134,42 @@ export default {
       if (row) openEditServer(row)
     }
 
+    function normalizeServerCode(value) {
+      return String(value || '')
+        .trim()
+        .replace(/[^a-zA-Z0-9_-]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .toUpperCase()
+    }
+
+    function inferServerCode(region, host) {
+      const regionPart = normalizeServerCode(region || 'VPN')
+      const hostPart = String(host || '')
+        .trim()
+        .split('.')
+        .filter(Boolean)
+        .pop()
+      return normalizeServerCode(`${regionPart}-${hostPart || 'SERVER'}`)
+    }
+
+    function applySmartServerDefaults() {
+      if (!serverForm.host) return
+      if (!serverForm.ssh_host) serverForm.ssh_host = serverForm.host
+      const inferredCode = inferServerCode(serverForm.region, serverForm.host)
+      if (!serverForm.code || serverForm.code === lastAutoServerCode.value) {
+        serverForm.code = inferredCode
+        lastAutoServerCode.value = inferredCode
+      }
+      const inferredName = `OpenVPN-${serverForm.code}`
+      if (!serverForm.name || serverForm.name === lastAutoServerName.value) {
+        serverForm.name = inferredName
+        lastAutoServerName.value = inferredName
+      }
+      if (!serverForm.ssh_user) serverForm.ssh_user = 'root'
+    }
+
     async function saveServer() {
+      applySmartServerDefaults()
       const payload = {
         ...serverForm,
         port: Number(serverForm.port) || 1194,
@@ -143,15 +189,23 @@ export default {
         client_config_dir: serverForm.client_config_dir || null,
         config_template: serverForm.config_template || null,
       }
+      let savedServer = null
       if (editingServerId.value) {
-        await openvpnAPI.updateServer(token.value, editingServerId.value, payload)
+        savedServer = await openvpnAPI.updateServer(token.value, editingServerId.value, payload)
       } else {
-        await openvpnAPI.createServer(token.value, payload)
+        savedServer = await openvpnAPI.createServer(token.value, payload)
       }
       serverForm.ssh_private_key_content = ''
       serverDialogVisible.value = false
       ElMessage.success('服务器已保存')
       await loadServers()
+      if (can('ops:openvpn:server:test') && savedServer?.id && savedServer.certificate_backend === 'ssh_easyrsa') {
+        try {
+          await testServer(savedServer, { silentSuccess: true })
+        } catch (error) {
+          ElMessage.warning(error?.message || '服务器已保存，但自动测试未通过')
+        }
+      }
     }
 
     async function deleteServer(row) {
@@ -185,13 +239,29 @@ export default {
     async function testSelectedServer() {
       const row = requireSingleSelection('测试')
       if (!row) return
+      try {
+        await testServer(row)
+      } catch (error) {
+        ElMessage.error(error?.message || '服务器配置不可用')
+      }
+    }
+
+    async function testServer(row, options = {}) {
       const result = await openvpnAPI.testServer(token.value, row.id)
       if (result?.ok) {
-        ElMessage.success(result.message || '服务器配置可用')
+        if (!options.silentSuccess) ElMessage.success(result.message || '服务器配置可用')
       } else {
         ElMessage.error(result?.message || '服务器配置不可用')
       }
     }
+
+    watch(
+      () => [serverForm.host, serverForm.region],
+      () => {
+        if (!serverDialogVisible.value || editingServerId.value) return
+        applySmartServerDefaults()
+      },
+    )
 
     onMounted(loadServers)
 
@@ -204,6 +274,7 @@ export default {
       deleteServer,
       editingServerId,
       editSelectedServer,
+      expectedSshKeyPath,
       isAllRowsSelected,
       loadServers,
       loading,

@@ -15,6 +15,7 @@
 - `openvpn-server-local.conf.template`：本地开发联调时追加到 OpenVPN 服务端配置的片段。
 - `openvpn-server-production.conf.template`：线上部署时追加到 OpenVPN 服务端配置的片段。
 - `openvpn-server-record.example.json`：系统“OpenVPN服务器管理”里的字段填写模板。
+- `prepare-oim-openvpn-storage.sh`：在 OIM 生产宿主机上准备 OpenVPN 持久化目录和 SSH 私钥权限。
 - `install-openvpn-oim-hooks.sh`：把事件脚本和配置片段安装到新 OpenVPN 服务器的参考脚本。
 
 ## 本地开发与线上部署隔离
@@ -49,7 +50,7 @@ https://oim.example.com/api
 
 | 页面字段 | 默认来源 |
 | --- | --- |
-| SSH私钥路径 | `OPENVPN_DEFAULT_SSH_KEY_PATH`。如果为空，则使用系统默认 SSH identity/agent |
+| SSH私钥路径 | 默认使用 `OPENVPN_SSH_KEY_DIR/服务器编码.key`；`OPENVPN_DEFAULT_SSH_KEY_PATH` 仅作为无服务器编码时的兜底 |
 | Easy-RSA目录 | `OPENVPN_DEFAULT_EASY_RSA_DIR`，默认 `/etc/openvpn/easy-rsa` |
 | PKI目录 | `Easy-RSA目录/pki` |
 | CA证书路径 | `PKI目录/ca.crt` |
@@ -84,6 +85,40 @@ OPENVPN_CLIENT_CONFIG_ROOT/服务器编码/部门编码/用户名/
 如果某台 OpenVPN 服务器路径与默认值不同，再在页面高级字段中单独覆盖。
 
 创建或编辑 OpenVPN 服务器时，也可以在“高级路径配置（可选）”中填写 `SSH私钥内容`。系统会把私钥写入后端容器可访问的路径，并只在数据库中保存私钥文件路径，不保存私钥明文。
+
+## 新增 OpenVPN 服务器的生产默认操作
+
+OIM 后端生产容器默认把项目目录下的 `./data/oim` 挂载为容器内 `/data/oim`。新增服务器时建议使用“服务器编码 + 私钥文件”的固定规则：
+
+```text
+宿主机路径：./data/oim/ssh/<服务器编码>.key
+容器内路径：/data/oim/ssh/<服务器编码>.key
+```
+
+在 OIM 生产宿主机的项目目录执行：
+
+```bash
+sh docs/openvpn/prepare-oim-openvpn-storage.sh <服务器编码> /path/to/private-key
+```
+
+例如：
+
+```bash
+sh docs/openvpn/prepare-oim-openvpn-storage.sh PH-191 ~/.ssh/PH-191.key
+```
+
+如果不想在宿主机手动复制私钥，也可以在系统页面新增或编辑 OpenVPN 服务器时填写 `SSH私钥内容`，后端会自动写入：
+
+```text
+/data/oim/ssh/<服务器编码>.key
+```
+
+保存服务器后，可以在生产宿主机验证容器内路径：
+
+```bash
+docker compose exec backend ls -l /data/oim/ssh/<服务器编码>.key
+docker compose exec backend ssh -i /data/oim/ssh/<服务器编码>.key -p 22 <SSH用户>@<OpenVPN服务器IP> 'echo ok'
+```
 
 ## 服务器端脚本路径建议
 
@@ -163,17 +198,17 @@ OIM_OPENVPN_SERVER_CODE=<SERVER_CODE> \
    ls -l <OPENVPN_DEFAULT_SSH_KEY_PATH>
    ```
 
-   如果服务器管理里已经保存了开发机路径，例如 `/Users/kavin/.ssh/openvpn_ph_191`，需要在页面里清空该字段或改为容器内路径：
+   如果服务器管理里已经保存了开发机路径，例如 `/Users/kavin/.ssh/PH-191.key`，需要在页面里清空该字段或改为容器内路径：
 
    ```text
-   /data/oim/ssh/openvpn_ph_191
+   /data/oim/ssh/<服务器编码>.key
    ```
 
    也可以直接执行 SQL 修正已有记录：
 
    ```sql
    UPDATE openvpn_servers
-   SET ssh_key_path = '/data/oim/ssh/openvpn_ph_191'
+   SET ssh_key_path = CONCAT('/data/oim/ssh/', code, '.key')
    WHERE certificate_backend = 'ssh_easyrsa'
      AND ssh_key_path LIKE '/Users/%';
    ```

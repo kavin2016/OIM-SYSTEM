@@ -1336,6 +1336,12 @@
   margin-top: 10px;
 }
 
+.readonly-form-row input[readonly] {
+  background: #f8fafc;
+  color: #64748b;
+  cursor: default;
+}
+
 @media (max-width: 720px) {
   .resource-pagination {
     align-items: stretch;

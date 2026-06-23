@@ -114,36 +114,37 @@
         <button type="button" class="text-button icon-only-button" aria-label="关闭" title="关闭" @click="serverDialogVisible = false">×</button>
       </header>
       <form class="layer-form" @submit.prevent="saveServer">
-        <div class="layer-form-grid">
-          <label><span>名称</span><input v-model="serverForm.name" type="text" required /></label>
-          <label><span>编码</span><input v-model="serverForm.code" type="text" required /></label>
-          <label><span>区域</span><input v-model="serverForm.region" type="text" /></label>
-          <label><span>地址</span><input v-model="serverForm.host" type="text" required /></label>
+        <div class="layer-form-grid openvpn-server-form-grid">
+          <label><span>区域</span><input v-model="serverForm.region" type="text" placeholder="PH" /></label>
+          <label><span>公网 IP / 域名</span><input v-model="serverForm.host" type="text" required placeholder="8.212.172.191" /></label>
+          <label><span>服务器编码</span><input v-model="serverForm.code" type="text" required placeholder="自动生成，可修改" /></label>
+          <label><span>服务器名称</span><input v-model="serverForm.name" type="text" required placeholder="自动生成，可修改" /></label>
           <label><span>端口</span><input v-model.number="serverForm.port" type="number" min="1" max="65535" required /></label>
           <label><span>协议</span><select v-model="serverForm.protocol"><option value="udp">udp</option><option value="tcp">tcp</option></select></label>
-          <label><span>最大连接</span><input v-model.number="serverForm.max_clients" type="number" min="0" /></label>
-          <label><span>当前在线</span><input v-model.number="serverForm.current_clients" type="number" min="0" /></label>
-          <label><span>状态</span><select v-model="serverForm.status"><option value="online">在线</option><option value="offline">离线</option><option value="maintenance">维护</option><option value="disabled">停用</option></select></label>
-          <label><span>启用</span><select v-model="serverForm.is_active"><option :value="true">启用</option><option :value="false">停用</option></select></label>
+          <label><span>最大连接</span><input v-model.number="serverForm.max_clients" type="number" min="0" placeholder="0 表示不限" /></label>
+          <label><span>SSH用户</span><input v-model="serverForm.ssh_user" type="text" placeholder="root" /></label>
+          <label class="layer-form-full"><span>SSH私钥内容</span><textarea v-model="serverForm.ssh_private_key_content" rows="5" placeholder="可选；填写后自动保存为服务器编码对应的私钥文件"></textarea></label>
+          <label class="layer-form-full readonly-form-row"><span>默认私钥路径</span><input :value="expectedSshKeyPath" type="text" readonly /></label>
           <label><span>默认服务器</span><select v-model="serverForm.is_default"><option :value="false">否</option><option :value="true">是</option></select></label>
-          <label><span>证书后端</span><select v-model="serverForm.certificate_backend"><option value="ssh_easyrsa">远程SSH Easy-RSA</option><option value="local_easyrsa">本地Easy-RSA</option><option value="metadata">仅记录元数据</option></select></label>
-          <label><span>SSH地址</span><input v-model="serverForm.ssh_host" type="text" placeholder="默认使用公网IP/域名" /></label>
-          <label><span>SSH端口</span><input v-model.number="serverForm.ssh_port" type="number" min="1" max="65535" placeholder="22" /></label>
-          <label><span>SSH用户</span><input v-model="serverForm.ssh_user" type="text" placeholder="root 或 openvpn" /></label>
+          <label><span>启用</span><select v-model="serverForm.is_active"><option :value="true">启用</option><option :value="false">停用</option></select></label>
           <details class="layer-form-full advanced-paths-panel">
-            <summary>高级路径配置（可选）</summary>
+            <summary>高级配置</summary>
             <div class="layer-form-grid">
-              <label><span>SSH私钥路径</span><input v-model="serverForm.ssh_key_path" type="text" placeholder="不填写则使用系统默认SSH密钥" /></label>
-              <label class="layer-form-full"><span>SSH私钥内容</span><textarea v-model="serverForm.ssh_private_key_content" rows="5" placeholder="可选。填写后系统会写入后端容器内路径，不会保存明文内容"></textarea></label>
+              <label><span>证书后端</span><select v-model="serverForm.certificate_backend"><option value="ssh_easyrsa">远程SSH Easy-RSA</option><option value="local_easyrsa">本地Easy-RSA</option><option value="metadata">仅记录元数据</option></select></label>
+              <label><span>状态</span><select v-model="serverForm.status"><option value="online">在线</option><option value="offline">离线</option><option value="maintenance">维护</option><option value="disabled">停用</option></select></label>
+              <label><span>SSH地址</span><input v-model="serverForm.ssh_host" type="text" placeholder="默认使用公网IP/域名" /></label>
+              <label><span>SSH端口</span><input v-model.number="serverForm.ssh_port" type="number" min="1" max="65535" placeholder="22" /></label>
+              <label><span>SSH私钥路径</span><input v-model="serverForm.ssh_key_path" type="text" placeholder="不填写则按服务器编码生成" /></label>
+              <label><span>当前在线</span><input v-model.number="serverForm.current_clients" type="number" min="0" /></label>
               <label><span>Easy-RSA目录</span><input v-model="serverForm.easy_rsa_dir" type="text" placeholder="默认 /etc/openvpn/easy-rsa" /></label>
               <label><span>PKI目录</span><input v-model="serverForm.pki_dir" type="text" placeholder="默认使用 Easy-RSA目录/pki" /></label>
               <label><span>CA证书路径</span><input v-model="serverForm.ca_cert_path" type="text" placeholder="默认使用 PKI目录/ca.crt" /></label>
               <label><span>TLS密钥路径</span><input v-model="serverForm.tls_crypt_key_path" type="text" placeholder="默认 /etc/openvpn/tls-crypt.key" /></label>
               <label><span>CRL路径</span><input v-model="serverForm.crl_path" type="text" placeholder="默认使用 PKI目录/crl.pem" /></label>
               <label class="layer-form-full"><span>证书输出目录</span><input v-model="serverForm.client_config_dir" type="text" placeholder="默认使用后端 OPENVPN_CLIENT_CONFIG_ROOT" /></label>
+              <label class="layer-form-full"><span>配置模板</span><textarea v-model="serverForm.config_template" rows="5" placeholder="不填写则使用系统默认客户端配置模板"></textarea></label>
             </div>
           </details>
-          <label class="layer-form-full"><span>配置模板</span><textarea v-model="serverForm.config_template" rows="5" placeholder="不填写则使用系统默认客户端配置模板"></textarea></label>
           <label><span>备注</span><textarea v-model="serverForm.remark" rows="3"></textarea></label>
         </div>
         <footer class="layer-footer"><button type="button" class="secondary-button" @click="serverDialogVisible = false">取消</button><button type="submit" class="primary-button">保存</button></footer>

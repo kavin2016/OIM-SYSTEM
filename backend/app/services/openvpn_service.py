@@ -127,10 +127,13 @@ class OpenVpnService(BaseService[OpenVpnServer]):
                 return {"ok": False, "message": f"Easy-RSA执行文件不存在：{executable}"}
             pki_dir = self._server_pki_dir(server)
             ca_path = Path(server.ca_cert_path).expanduser() if server.ca_cert_path else pki_dir / "ca.crt"
+            tls_key_path = Path(server.tls_crypt_key_path).expanduser() if server.tls_crypt_key_path else None
             if not pki_dir.exists():
                 return {"ok": False, "message": f"PKI目录不存在：{pki_dir}"}
             if not ca_path.exists():
                 return {"ok": False, "message": f"CA证书不存在：{ca_path}"}
+            if tls_key_path and not tls_key_path.exists():
+                return {"ok": False, "message": f"TLS密钥不存在：{tls_key_path}"}
             return {"ok": True, "message": "Easy-RSA证书后端配置可用"}
         if server.certificate_backend == "ssh_easyrsa":
             try:
@@ -951,7 +954,7 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         if backend == "ssh_easyrsa":
             data["ssh_host"] = data.get("ssh_host") or data.get("host")
             data["ssh_port"] = data.get("ssh_port") or 22
-            data["ssh_key_path"] = data.get("ssh_key_path") or settings.openvpn_default_ssh_key_path
+            data["ssh_key_path"] = data.get("ssh_key_path") or self._default_server_ssh_key_path(data.get("code"))
         return data
 
     def _persist_server_ssh_private_key(self, data: dict, server: Optional[OpenVpnServer] = None) -> dict:
@@ -965,7 +968,7 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         key_path_value = data.get("ssh_key_path") or (server.ssh_key_path if server else None)
         if not key_path_value or str(key_path_value).startswith("/Users/"):
             key_name = self._safe_path_segment(data.get("code") or (server.code if server else "openvpn_server"))
-            default_root = Path(settings.openvpn_default_ssh_key_path).expanduser().parent if settings.openvpn_default_ssh_key_path else Path("/data/oim/ssh")
+            default_root = Path(settings.openvpn_ssh_key_dir).expanduser()
             key_path = default_root / f"{key_name}.key"
         else:
             key_path = Path(str(key_path_value)).expanduser()
@@ -984,6 +987,7 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         data = self._apply_server_defaults(
             {
                 "certificate_backend": server.certificate_backend,
+                "code": server.code,
                 "host": server.host,
                 "ssh_host": server.ssh_host,
                 "ssh_port": server.ssh_port,
@@ -999,6 +1003,12 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         for field_name, value in data.items():
             if hasattr(server, field_name):
                 setattr(server, field_name, value)
+
+    def _default_server_ssh_key_path(self, server_code: Optional[str]) -> Optional[str]:
+        if server_code:
+            key_name = self._safe_path_segment(server_code)
+            return str(Path(settings.openvpn_ssh_key_dir).expanduser() / f"{key_name}.key")
+        return settings.openvpn_default_ssh_key_path
 
     def _clear_default_server(self, except_id: Optional[int] = None) -> None:
         query = self.db.query(OpenVpnServer).filter(OpenVpnServer.is_default.is_(True))
@@ -1686,13 +1696,19 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         easy_rsa_dir = self._remote_easy_rsa_dir(server)
         pki_dir = self._remote_pki_dir(server)
         ca_path = server.ca_cert_path or f"{pki_dir}/ca.crt"
-        return " && ".join(
-            [
-                f"test -x {shlex.quote(f'{easy_rsa_dir}/easyrsa')}",
-                f"test -d {shlex.quote(pki_dir)}",
-                f"test -f {shlex.quote(ca_path)}",
-            ]
-        )
+        tls_key_path = server.tls_crypt_key_path or settings.openvpn_default_tls_crypt_key_path
+        checks = [
+            ("-x", f"{easy_rsa_dir}/easyrsa", "Easy-RSA执行文件不存在或不可执行"),
+            ("-d", pki_dir, "PKI目录不存在"),
+            ("-f", ca_path, "CA证书不存在"),
+        ]
+        if tls_key_path:
+            checks.append(("-f", tls_key_path, "TLS密钥不存在"))
+        commands = [
+            f"test {flag} {shlex.quote(path)} || {{ echo {shlex.quote(f'{message}：{path}')} >&2; exit 20; }}"
+            for flag, path, message in checks
+        ]
+        return " && ".join(commands)
 
     def _run_remote_shell(self, server: OpenVpnServer, command: str, capture: bool = False) -> str:
         ssh_command = [*self._ssh_base_command(server), self._ssh_target(server), command]
@@ -1760,10 +1776,14 @@ class OpenVpnService(BaseService[OpenVpnServer]):
 
     def _effective_ssh_key_path(self, server: OpenVpnServer) -> Optional[str]:
         if not server.ssh_key_path:
-            return settings.openvpn_default_ssh_key_path
+            return self._default_server_ssh_key_path(server.code)
         key_path = Path(server.ssh_key_path).expanduser()
         if key_path.exists():
             return str(key_path)
+        code_key_path_value = self._default_server_ssh_key_path(server.code)
+        code_key_path = Path(code_key_path_value).expanduser() if code_key_path_value else None
+        if code_key_path and code_key_path.exists():
+            return str(code_key_path)
         default_key_path = Path(settings.openvpn_default_ssh_key_path).expanduser() if settings.openvpn_default_ssh_key_path else None
         if default_key_path and default_key_path.exists():
             return str(default_key_path)
