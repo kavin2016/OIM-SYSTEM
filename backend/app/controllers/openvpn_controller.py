@@ -62,6 +62,7 @@ def _account_read(account: OpenVpnAccount) -> OpenVpnAccountRead:
         username=account.user.username if account.user else None,
         nickname=account.user.nickname if account.user else None,
         server_name=account.server.name if account.server else None,
+        server_vpn_type=account.server.vpn_type if account.server else None,
         certificate_id=latest_cert.id if latest_cert else None,
         certificate_status=latest_cert.status if latest_cert else None,
         certificate_serial_number=latest_cert.serial_number if latest_cert else None,

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 from datetime import date, datetime
+import ipaddress
 from pathlib import Path
 import re
 import shlex
@@ -9,6 +11,8 @@ import subprocess
 from typing import Optional
 from uuid import uuid4
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import x25519
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
@@ -118,6 +122,12 @@ class OpenVpnService(BaseService[OpenVpnServer]):
 
     def test_server(self, server_id: int) -> dict:
         server = self.get_server_required(server_id)
+        if server.vpn_type == "wireguard":
+            try:
+                public_key = self._wireguard_server_public_key(server)
+            except ConflictError as error:
+                return {"ok": False, "message": str(error)}
+            return {"ok": True, "message": "WireGuard服务器配置可用", "public_key": public_key}
         if server.certificate_backend == "local_easyrsa":
             if not server.easy_rsa_dir:
                 return {"ok": False, "message": "未配置Easy-RSA目录"}
@@ -282,7 +292,10 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         )
         if certificate:
             server = self.get_server_required(certificate.server_id)
-            self._revoke_certificate_files(server, certificate.common_name)
+            if server.vpn_type == "wireguard":
+                self._revoke_wireguard_peer(server, account)
+            else:
+                self._revoke_certificate_files(server, certificate.common_name)
             certificate.status = "revoked"
             certificate.revoked_at = datetime.utcnow()
             certificate.revoked_reason = reason or "账号吊销"
@@ -342,8 +355,12 @@ class OpenVpnService(BaseService[OpenVpnServer]):
             .first()
         )
         if existing:
-            raise ConflictError("该账号已有有效OpenVPN证书，请使用续期或先吊销")
-        cert_info = self._issue_certificate_files(server, account.vpn_username, expires_at)
+            raise ConflictError("该账号已有有效VPN凭据，请使用续期或先吊销")
+        cert_info = (
+            self._issue_wireguard_peer(server, account)
+            if server.vpn_type == "wireguard"
+            else self._issue_certificate_files(server, account.vpn_username, expires_at)
+        )
         cert_info = self._archive_certificate_files(server, account, cert_info)
         certificate = OpenVpnCertificate(
             account_id=account.id,
@@ -367,7 +384,11 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         if certificate.status == "revoked":
             return certificate
         server = self.get_server_required(certificate.server_id)
-        self._revoke_certificate_files(server, certificate.common_name)
+        if server.vpn_type == "wireguard":
+            account = self.get_account_required(certificate.account_id)
+            self._revoke_wireguard_peer(server, account)
+        else:
+            self._revoke_certificate_files(server, certificate.common_name)
         certificate.status = "revoked"
         certificate.revoked_at = datetime.utcnow()
         certificate.revoked_reason = reason
@@ -382,6 +403,13 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         if old_certificate.status == "revoked":
             raise ConflictError("已吊销证书不能续期")
         server = self.get_server_required(old_certificate.server_id)
+        if server.vpn_type == "wireguard":
+            old_certificate.expires_at = expires_at
+            account = self.get_account_required(old_certificate.account_id)
+            account.config_version += 1
+            account.updated_by = actor_id
+            self.db.add(account)
+            return self.commit(old_certificate, "WireGuard凭据续期失败")
         old_certificate.status = "expired"
         account = self.get_account_required(old_certificate.account_id)
         cert_info = self._renew_certificate_files(server, old_certificate.common_name, expires_at)
@@ -445,19 +473,19 @@ class OpenVpnService(BaseService[OpenVpnServer]):
             .first()
         )
         if not certificate:
-            raise ConflictError("请先签发OpenVPN证书")
+            raise ConflictError("请先签发VPN凭据")
         content = self._render_client_config(server, certificate)
         account.last_config_generated_at = datetime.utcnow()
         account.config_version += 1
         account.updated_by = actor_id
-        filename = f"{self._account_certificate_basename(server, account)}.ovpn"
+        filename = f"{self._account_certificate_basename(server, account)}.{self._client_config_extension(server)}"
         if server.client_config_dir:
             config_path = self._account_certificate_dir(server, account) / filename
             config_path.parent.mkdir(parents=True, exist_ok=True)
             config_path.write_text(content, encoding="utf-8")
             certificate.config_file_path = str(config_path)
             self.db.add(certificate)
-        self.commit(account, "OpenVPN配置生成失败")
+        self.commit(account, "VPN配置生成失败")
         return filename, content
 
     def list_sessions(
@@ -941,6 +969,23 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         return self.commit(account, "OpenVPN账号禁用失败")
 
     def _apply_server_defaults(self, data: dict) -> dict:
+        vpn_type = data.get("vpn_type") or "openvpn"
+        data["vpn_type"] = vpn_type
+        if vpn_type == "wireguard":
+            data["port"] = data.get("port") or 51820
+            data["protocol"] = data.get("protocol") or "udp"
+            data["certificate_backend"] = "wireguard"
+            data["ssh_host"] = data.get("ssh_host") or data.get("host")
+            data["ssh_port"] = data.get("ssh_port") or 22
+            data["ssh_user"] = data.get("ssh_user") or "root"
+            data["ssh_key_path"] = data.get("ssh_key_path") or self._default_server_ssh_key_path(data.get("code"))
+            data["wg_interface"] = data.get("wg_interface") or "wg0"
+            data["wg_network_cidr"] = data.get("wg_network_cidr") or "10.66.0.0/24"
+            data["wg_dns"] = data.get("wg_dns") or "1.1.1.1,1.0.0.1"
+            data["wg_allowed_ips"] = data.get("wg_allowed_ips") or "0.0.0.0/0,::/0"
+            data["wg_persistent_keepalive"] = data.get("wg_persistent_keepalive") if data.get("wg_persistent_keepalive") is not None else 25
+            data["client_config_dir"] = data.get("client_config_dir") or settings.openvpn_client_config_root
+            return data
         backend = data.get("certificate_backend") or "metadata"
         if backend in ("ssh_easyrsa", "local_easyrsa"):
             easy_rsa_dir = (data.get("easy_rsa_dir") or settings.openvpn_default_easy_rsa_dir).rstrip("/")
@@ -987,6 +1032,7 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         data = self._apply_server_defaults(
             {
                 "certificate_backend": server.certificate_backend,
+                "vpn_type": server.vpn_type,
                 "code": server.code,
                 "host": server.host,
                 "ssh_host": server.ssh_host,
@@ -998,6 +1044,12 @@ class OpenVpnService(BaseService[OpenVpnServer]):
                 "tls_crypt_key_path": server.tls_crypt_key_path,
                 "crl_path": server.crl_path,
                 "client_config_dir": server.client_config_dir,
+                "wg_interface": server.wg_interface,
+                "wg_network_cidr": server.wg_network_cidr,
+                "wg_dns": server.wg_dns,
+                "wg_allowed_ips": server.wg_allowed_ips,
+                "wg_persistent_keepalive": server.wg_persistent_keepalive,
+                "wg_public_key": server.wg_public_key,
             }
         )
         for field_name, value in data.items():
@@ -1427,6 +1479,80 @@ class OpenVpnService(BaseService[OpenVpnServer]):
             "request_path": str(request_path) if request_path.exists() else None,
         }
 
+    def _issue_wireguard_peer(self, server: OpenVpnServer, account: OpenVpnAccount) -> dict:
+        private_key, public_key = self._generate_wireguard_keypair()
+        client_address = account.wg_client_address or self._next_wireguard_client_address(server)
+        server_public_key = self._wireguard_server_public_key(server)
+        interface = server.wg_interface or "wg0"
+        allowed_ip = f"{client_address}/32"
+        command = (
+            f"wg set {shlex.quote(interface)} peer {shlex.quote(public_key)} "
+            f"allowed-ips {shlex.quote(allowed_ip)}"
+        )
+        self._run_remote_shell(server, command)
+        self._run_remote_shell(server, f"wg-quick save {shlex.quote(interface)} || true")
+
+        account.wg_client_private_key = private_key
+        account.wg_client_public_key = public_key
+        account.wg_client_address = client_address
+        server.wg_public_key = server_public_key
+        self.db.add(server)
+        self.db.add(account)
+        return {
+            "serial_number": f"wg-{uuid4().hex}",
+            "cert_path": None,
+            "key_path": None,
+            "request_path": None,
+        }
+
+    def _revoke_wireguard_peer(self, server: OpenVpnServer, account: OpenVpnAccount) -> None:
+        if not account.wg_client_public_key:
+            return
+        interface = server.wg_interface or "wg0"
+        command = f"wg set {shlex.quote(interface)} peer {shlex.quote(account.wg_client_public_key)} remove"
+        self._run_remote_shell(server, command)
+        self._run_remote_shell(server, f"wg-quick save {shlex.quote(interface)} || true")
+
+    def _wireguard_server_public_key(self, server: OpenVpnServer) -> str:
+        if server.wg_public_key:
+            return server.wg_public_key
+        interface = server.wg_interface or "wg0"
+        public_key = self._run_remote_shell(server, f"wg show {shlex.quote(interface)} public-key", capture=True).strip()
+        if not public_key:
+            raise ConflictError(f"无法获取WireGuard服务器公钥，请确认接口 {interface} 已启动")
+        server.wg_public_key = public_key
+        self.db.add(server)
+        return public_key
+
+    def _next_wireguard_client_address(self, server: OpenVpnServer) -> str:
+        network = ipaddress.ip_network(server.wg_network_cidr or "10.66.0.0/24", strict=False)
+        used = {
+            row[0]
+            for row in self.db.query(OpenVpnAccount.wg_client_address)
+            .filter(OpenVpnAccount.server_id == server.id, OpenVpnAccount.wg_client_address.isnot(None))
+            .all()
+        }
+        hosts = list(network.hosts())
+        for host in hosts[1:]:
+            address = str(host)
+            if address not in used:
+                return address
+        raise ConflictError("WireGuard客户端网段可用地址已用完")
+
+    @staticmethod
+    def _generate_wireguard_keypair() -> tuple[str, str]:
+        private = x25519.X25519PrivateKey.generate()
+        private_bytes = private.private_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PrivateFormat.Raw,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+        public_bytes = private.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        return base64.b64encode(private_bytes).decode("ascii"), base64.b64encode(public_bytes).decode("ascii")
+
     def _revoke_certificate_files(self, server: OpenVpnServer, common_name: str) -> None:
         if server.certificate_backend == "ssh_easyrsa":
             self._validate_common_name(common_name)
@@ -1464,6 +1590,8 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         }
 
     def _archive_certificate_files(self, server: OpenVpnServer, account: OpenVpnAccount, cert_info: dict) -> dict:
+        if server.vpn_type == "wireguard":
+            return cert_info
         if cert_info.get("remote"):
             if not server.client_config_dir:
                 raise ConflictError("远程证书签发必须配置证书文件输出目录")
@@ -1570,6 +1698,10 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         username = self._safe_path_segment(account.user.username if account.user else account.vpn_username)
         server_host = self._safe_path_segment(server.host)
         return f"{department_code}-{username}-{server_host}"
+
+    @staticmethod
+    def _client_config_extension(server: OpenVpnServer) -> str:
+        return "conf" if server.vpn_type == "wireguard" else "ovpn"
 
     def _delete_account_certificate_files(self, account: OpenVpnAccount) -> None:
         certificates = (
@@ -1845,6 +1977,9 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         return Path(server.easy_rsa_dir).expanduser() / "pki"
 
     def _render_client_config(self, server: OpenVpnServer, certificate: OpenVpnCertificate) -> str:
+        if server.vpn_type == "wireguard":
+            account = self.get_account_required(certificate.account_id)
+            return self._render_wireguard_client_config(server, account)
         if server.certificate_backend not in ("local_easyrsa", "ssh_easyrsa"):
             raise ConflictError("服务器未配置真实证书签发后端，无法生成可用的OpenVPN配置")
         template = server.config_template or self._default_config_template()
@@ -1881,6 +2016,28 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         if values["tls_crypt"]:
             values["tls_crypt_block"] = f"<tls-crypt>\n{values['tls_crypt']}\n</tls-crypt>"
         return template.format(**values)
+
+    def _render_wireguard_client_config(self, server: OpenVpnServer, account: OpenVpnAccount) -> str:
+        if not account.wg_client_private_key or not account.wg_client_address:
+            raise ConflictError("WireGuard客户端凭据不完整，请重新签发")
+        server_public_key = self._wireguard_server_public_key(server)
+        dns = server.wg_dns or "1.1.1.1,1.0.0.1"
+        allowed_ips = server.wg_allowed_ips or "0.0.0.0/0,::/0"
+        keepalive = server.wg_persistent_keepalive if server.wg_persistent_keepalive is not None else 25
+        lines = [
+            "[Interface]",
+            f"PrivateKey = {account.wg_client_private_key}",
+            f"Address = {account.wg_client_address}/32",
+            f"DNS = {dns}",
+            "",
+            "[Peer]",
+            f"PublicKey = {server_public_key}",
+            f"Endpoint = {server.host}:{server.port}",
+            f"AllowedIPs = {allowed_ips}",
+        ]
+        if keepalive:
+            lines.append(f"PersistentKeepalive = {keepalive}")
+        return "\n".join(lines) + "\n"
 
     @staticmethod
     def _validate_common_name(common_name: str) -> None:

@@ -12,6 +12,7 @@
 
 - `local-development.env.example`：本地开发环境的后端环境变量模板。
 - `production.env.example`：线上部署环境的后端环境变量模板。
+- `WIREGUARD.md`：WireGuard VPN 配置模式说明。
 - `openvpn-server-local.conf.template`：本地开发联调时追加到 OpenVPN 服务端配置的片段。
 - `openvpn-server-production.conf.template`：线上部署时追加到 OpenVPN 服务端配置的片段。
 - `openvpn-server-record.example.json`：系统“OpenVPN服务器管理”里的字段填写模板。

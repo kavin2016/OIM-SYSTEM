@@ -37,6 +37,7 @@ export default {
     const isAllRowsSelected = computed(
       () => servers.value.length > 0 && selectedRows.value.length === servers.value.length,
     )
+    const isWireGuardMode = computed(() => serverForm.vpn_type === 'wireguard')
     const expectedSshKeyPath = computed(() => {
       if (serverForm.ssh_key_path) return serverForm.ssh_key_path
       if (!serverForm.code) return '/data/oim/ssh/<服务器编码>.key'
@@ -144,15 +145,29 @@ export default {
 
     function inferServerCode(region, host) {
       const regionPart = normalizeServerCode(region || 'VPN')
+      const typePart = serverForm.vpn_type === 'wireguard' ? 'WG' : regionPart
       const hostPart = String(host || '')
         .trim()
         .split('.')
         .filter(Boolean)
         .pop()
-      return normalizeServerCode(`${regionPart}-${hostPart || 'SERVER'}`)
+      return normalizeServerCode(`${typePart}-${hostPart || 'SERVER'}`)
     }
 
     function applySmartServerDefaults() {
+      if (serverForm.vpn_type === 'wireguard') {
+        serverForm.port = Number(serverForm.port) === 1194 ? 51820 : serverForm.port || 51820
+        serverForm.protocol = 'udp'
+        serverForm.certificate_backend = 'wireguard'
+        serverForm.wg_interface = serverForm.wg_interface || 'wg0'
+        serverForm.wg_network_cidr = serverForm.wg_network_cidr || '10.66.0.0/24'
+        serverForm.wg_dns = serverForm.wg_dns || '1.1.1.1,1.0.0.1'
+        serverForm.wg_allowed_ips = serverForm.wg_allowed_ips || '0.0.0.0/0,::/0'
+        serverForm.wg_persistent_keepalive = serverForm.wg_persistent_keepalive ?? 25
+      } else if (serverForm.certificate_backend === 'wireguard') {
+        serverForm.port = Number(serverForm.port) === 51820 ? 1194 : serverForm.port || 1194
+        serverForm.certificate_backend = 'ssh_easyrsa'
+      }
       if (!serverForm.host) return
       if (!serverForm.ssh_host) serverForm.ssh_host = serverForm.host
       const inferredCode = inferServerCode(serverForm.region, serverForm.host)
@@ -188,6 +203,12 @@ export default {
         crl_path: serverForm.crl_path || null,
         client_config_dir: serverForm.client_config_dir || null,
         config_template: serverForm.config_template || null,
+        wg_interface: serverForm.wg_interface || null,
+        wg_network_cidr: serverForm.wg_network_cidr || null,
+        wg_dns: serverForm.wg_dns || null,
+        wg_allowed_ips: serverForm.wg_allowed_ips || null,
+        wg_persistent_keepalive: serverForm.wg_persistent_keepalive !== '' ? Number(serverForm.wg_persistent_keepalive) : null,
+        wg_public_key: serverForm.wg_public_key || null,
       }
       let savedServer = null
       if (editingServerId.value) {
@@ -199,7 +220,7 @@ export default {
       serverDialogVisible.value = false
       ElMessage.success('服务器已保存')
       await loadServers()
-      if (can('ops:openvpn:server:test') && savedServer?.id && savedServer.certificate_backend === 'ssh_easyrsa') {
+      if (can('ops:openvpn:server:test') && savedServer?.id && ['ssh_easyrsa', 'wireguard'].includes(savedServer.certificate_backend)) {
         try {
           await testServer(savedServer, { silentSuccess: true })
         } catch (error) {
@@ -263,6 +284,16 @@ export default {
       },
     )
 
+    watch(
+      () => serverForm.vpn_type,
+      () => {
+        if (!serverDialogVisible.value || editingServerId.value) return
+        lastAutoServerCode.value = ''
+        lastAutoServerName.value = ''
+        applySmartServerDefaults()
+      },
+    )
+
     onMounted(loadServers)
 
     return {
@@ -276,6 +307,7 @@ export default {
       editSelectedServer,
       expectedSshKeyPath,
       isAllRowsSelected,
+      isWireGuardMode,
       loadServers,
       loading,
       openCreateServer,

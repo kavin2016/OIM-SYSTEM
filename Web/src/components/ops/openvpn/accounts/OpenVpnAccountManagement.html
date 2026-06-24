@@ -5,7 +5,7 @@
 
   <div class="query-panel">
     <div class="query-header">
-      <div><h3>OpenVPN用户管理</h3></div>
+      <div><h3>VPN用户管理</h3></div>
     </div>
   </div>
 
@@ -21,15 +21,15 @@
       </button>
       <button v-if="can('ops:openvpn:cert:issue')" type="button" class="secondary-button" :disabled="selectedRows.length !== 1 || selectedRow?.status !== 'enabled'" @click="issueSelectedAccountCertificate">
         <span class="button-icon">✓</span>
-        <span>签发证书</span>
+        <span>签发凭据</span>
       </button>
       <button v-if="can('ops:openvpn:cert:renew')" type="button" class="secondary-button success-soft-button" :disabled="selectedRows.length !== 1 || selectedRow?.certificate_status !== 'issued'" @click="renewSelectedCertificate">
         <span class="button-icon">{{ actionIconMap.update }}</span>
-        <span>续期证书</span>
+        <span>续期凭据</span>
       </button>
       <button v-if="can('ops:openvpn:cert:revoke')" type="button" class="danger-button danger-soft-button" :disabled="selectedRows.length !== 1 || selectedRow?.certificate_status === 'revoked'" @click="revokeSelectedCertificate">
         <span class="button-icon">{{ actionIconMap.delete }}</span>
-        <span>吊销证书</span>
+        <span>吊销凭据</span>
       </button>
       <button v-if="can('ops:openvpn:account:revoke')" type="button" class="danger-button danger-soft-button" :disabled="selectedRows.length !== 1 || selectedRow?.status === 'revoked'" @click="revokeSelectedAccount">
         <span class="button-icon">{{ actionIconMap.delete }}</span>
@@ -81,7 +81,7 @@
       <table>
         <thead>
           <tr>
-            <th class="selection-cell"><input type="checkbox" :checked="isAllRowsSelected" @change="toggleAllRows" /></th><th>ID</th><th>系统用户</th><th>VPN用户名</th><th>服务器</th><th>VPN状态</th><th>证书状态</th><th>证书序列号</th><th>到期时间</th><th>最近连接</th><th>操作</th>
+            <th class="selection-cell"><input type="checkbox" :checked="isAllRowsSelected" @change="toggleAllRows" /></th><th>ID</th><th>系统用户</th><th>VPN用户名</th><th>服务器</th><th>VPN状态</th><th>凭据状态</th><th>凭据编号</th><th>到期时间</th><th>最近连接</th><th>操作</th>
           </tr>
         </thead>
         <tbody>
@@ -100,9 +100,9 @@
             <td>{{ formatDate(item.last_connected_at) }}</td>
             <td class="action-cell">
               <button v-if="can('ops:openvpn:account:assign-server')" type="button" class="secondary-button" @click="openAssignServer(item)">分配服务器</button>
-              <button v-if="can('ops:openvpn:cert:issue')" type="button" class="secondary-button" :disabled="item.status !== 'enabled'" @click="issueCertificate(item)">签发证书</button>
+              <button v-if="can('ops:openvpn:cert:issue')" type="button" class="secondary-button" :disabled="item.status !== 'enabled'" @click="issueCertificate(item)">签发凭据</button>
               <button v-if="can('ops:openvpn:cert:renew')" type="button" class="secondary-button" :disabled="item.certificate_status !== 'issued'" @click="renewAccountCertificate(item)">续期</button>
-              <button v-if="can('ops:openvpn:cert:revoke')" type="button" class="danger-button" :disabled="item.certificate_status === 'revoked'" @click="revokeAccountCertificate(item)">吊销证书</button>
+              <button v-if="can('ops:openvpn:cert:revoke')" type="button" class="danger-button" :disabled="item.certificate_status === 'revoked'" @click="revokeAccountCertificate(item)">吊销凭据</button>
               <button v-if="can('ops:openvpn:account:revoke')" type="button" class="danger-button" :disabled="item.status === 'revoked'" @click="revokeAccount(item)">吊销账号</button>
               <button v-if="can('ops:openvpn:account:download-config')" type="button" class="secondary-button" @click="downloadConfig(item)">下载配置</button>
               <button v-if="can('ops:openvpn:account:disable')" type="button" class="danger-button" :disabled="item.status !== 'enabled'" @click="disableAccount(item)">禁用</button>
@@ -188,7 +188,7 @@
   <div v-if="revokeCertificateLayer.visible" class="layer-mask">
     <section class="layer-panel layer-panel-small confirm-layer-panel" role="dialog" aria-modal="true">
       <header class="layer-header">
-        <h3>吊销证书确认</h3>
+        <h3>吊销凭据确认</h3>
         <button
           type="button"
           class="text-button icon-only-button"
@@ -200,12 +200,12 @@
       </header>
       <div class="layer-form">
         <div class="confirm-message">
-          <p>确认要吊销该用户的 OpenVPN 证书吗？</p>
+          <p>确认要吊销该用户的 VPN 凭据吗？</p>
           <p>
             <strong>{{ revokeCertificateLayer.row?.username || '-' }}</strong>
             <span> / {{ revokeCertificateLayer.row?.vpn_username || '-' }}</span>
           </p>
-          <p>吊销后该证书将不能继续用于 VPN 连接。</p>
+          <p>吊销后VPN凭据将不能继续用于 VPN 连接。</p>
         </div>
         <footer class="layer-footer">
           <button
@@ -245,7 +245,7 @@
             <strong>{{ revokeAccountLayer.row?.username || '-' }}</strong>
             <span> / {{ revokeAccountLayer.row?.vpn_username || '-' }}</span>
           </p>
-          <p>吊销后会同步吊销当前有效证书，并关闭该用户的在线会话。</p>
+          <p>吊销后会同步吊销当前有效凭据，并关闭该用户的在线会话。</p>
         </div>
         <footer class="layer-footer">
           <button

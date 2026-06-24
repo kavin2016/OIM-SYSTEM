@@ -274,10 +274,10 @@ export default {
     async function issueCertificate(row) {
       try {
         await openvpnAPI.issueCertificate(token.value, row.id, { valid_days: 365 })
-        ElMessage.success('证书已签发')
+        ElMessage.success('凭据已签发')
         await Promise.all([loadAccounts(), loadCertificates()])
       } catch (error) {
-        ElMessageBox.alert(error.message || '证书签发失败', '证书签发失败', {
+        ElMessageBox.alert(error.message || '凭据签发失败', '凭据签发失败', {
           type: 'error',
           confirmButtonText: '确定',
         }).catch(() => {})
@@ -285,17 +285,17 @@ export default {
     }
 
     async function issueSelectedAccountCertificate() {
-      const row = requireSingleSelection('签发证书')
+      const row = requireSingleSelection('签发凭据')
       if (row) await issueCertificate(row)
     }
 
     function revokeAccountCertificate(row) {
       if (!row.certificate_id) {
-        ElMessage.warning('该用户没有可吊销的证书')
+        ElMessage.warning('该用户没有可吊销的凭据')
         return
       }
       if (row.certificate_status !== 'issued') {
-        ElMessage.warning('只有已签发的有效证书才能吊销')
+        ElMessage.warning('只有已签发的有效凭据才能吊销')
         return
       }
       Object.assign(revokeCertificateLayer, {
@@ -325,11 +325,11 @@ export default {
           submitting: false,
           row: null,
         })
-        ElMessage.success('证书已吊销')
+        ElMessage.success('凭据已吊销')
         await Promise.all([loadAccounts(), loadCertificates()])
       } catch (error) {
         revokeCertificateLayer.submitting = false
-        if (!isCancelAction(error)) ElMessage.error(error.message || '证书吊销失败')
+        if (!isCancelAction(error)) ElMessage.error(error.message || '凭据吊销失败')
       }
     }
 
@@ -386,15 +386,15 @@ export default {
 
     async function renewAccountCertificate(row) {
       if (!row.certificate_id) {
-        ElMessage.warning('该用户没有可续期的证书')
+        ElMessage.warning('该用户没有可续期的凭据')
         return
       }
       try {
         await openvpnAPI.renewCertificate(token.value, row.certificate_id, { valid_days: 365 })
-        ElMessage.success('证书已续期')
+        ElMessage.success('凭据已续期')
         await Promise.all([loadAccounts(), loadCertificates()])
       } catch (error) {
-        ElMessage.error(error.message || '证书续期失败')
+        ElMessage.error(error.message || '凭据续期失败')
       }
     }
 

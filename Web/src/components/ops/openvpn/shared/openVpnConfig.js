@@ -32,6 +32,7 @@ export function emptyOpenVpnServerForm() {
   return {
     name: '',
     code: '',
+    vpn_type: 'openvpn',
     region: '',
     host: '',
     port: 1194,
@@ -54,6 +55,12 @@ export function emptyOpenVpnServerForm() {
     crl_path: '',
     client_config_dir: '',
     config_template: '',
+    wg_interface: 'wg0',
+    wg_network_cidr: '10.66.0.0/24',
+    wg_dns: '1.1.1.1,1.0.0.1',
+    wg_allowed_ips: '0.0.0.0/0,::/0',
+    wg_persistent_keepalive: 25,
+    wg_public_key: '',
     remark: '',
   }
 }

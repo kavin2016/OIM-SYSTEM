@@ -8,8 +8,9 @@ SERVER_STATUSES = {"online", "offline", "maintenance", "disabled"}
 ACCOUNT_STATUSES = {"pending", "enabled", "disabled", "revoked"}
 CERTIFICATE_STATUSES = {"issued", "expired", "revoked"}
 TARGET_TYPES = {"user", "department", "role", "position"}
+VPN_TYPES = {"openvpn", "wireguard"}
 PROTOCOLS = {"udp", "tcp"}
-CERTIFICATE_BACKENDS = {"metadata", "local_easyrsa", "ssh_easyrsa"}
+CERTIFICATE_BACKENDS = {"metadata", "local_easyrsa", "ssh_easyrsa", "wireguard"}
 TRAFFIC_DIMENSIONS = {"server", "department", "certificate"}
 TRAFFIC_PERIOD_TYPES = {"day", "month"}
 TRAFFIC_THRESHOLD_TARGET_TYPES = {"server", "certificate"}
@@ -20,6 +21,7 @@ TRAFFIC_ALERT_STATUSES = {"open", "processed"}
 class OpenVpnServerBase(BaseModel):
     name: str
     code: str
+    vpn_type: str = "openvpn"
     region: Optional[str] = None
     host: str
     port: int = Field(default=1194, ge=1, le=65535)
@@ -38,6 +40,14 @@ class OpenVpnServerBase(BaseModel):
         if value in PROTOCOLS:
             return value
         raise ValueError("协议只能是 udp 或 tcp")
+
+    @field_validator("vpn_type")
+    @classmethod
+    def validate_vpn_type(cls, value):
+        value = (value or "").lower()
+        if value in VPN_TYPES:
+            return value
+        raise ValueError("VPN类型只能是 openvpn 或 wireguard")
 
     @field_validator("status")
     @classmethod
@@ -62,13 +72,19 @@ class OpenVpnServerSecretMixin(BaseModel):
     crl_path: Optional[str] = None
     client_config_dir: Optional[str] = None
     config_template: Optional[str] = None
+    wg_interface: Optional[str] = None
+    wg_network_cidr: Optional[str] = None
+    wg_dns: Optional[str] = None
+    wg_allowed_ips: Optional[str] = None
+    wg_persistent_keepalive: Optional[int] = Field(default=None, ge=0)
+    wg_public_key: Optional[str] = None
 
     @field_validator("certificate_backend")
     @classmethod
     def validate_certificate_backend(cls, value):
         if value in CERTIFICATE_BACKENDS:
             return value
-        raise ValueError("证书后端只能是 metadata、local_easyrsa 或 ssh_easyrsa")
+        raise ValueError("证书后端只能是 metadata、local_easyrsa、ssh_easyrsa 或 wireguard")
 
 
 class OpenVpnServerCreate(OpenVpnServerBase, OpenVpnServerSecretMixin):
@@ -78,6 +94,7 @@ class OpenVpnServerCreate(OpenVpnServerBase, OpenVpnServerSecretMixin):
 class OpenVpnServerUpdate(BaseModel):
     name: Optional[str] = None
     code: Optional[str] = None
+    vpn_type: Optional[str] = None
     region: Optional[str] = None
     host: Optional[str] = None
     port: Optional[int] = Field(default=None, ge=1, le=65535)
@@ -100,6 +117,12 @@ class OpenVpnServerUpdate(BaseModel):
     crl_path: Optional[str] = None
     client_config_dir: Optional[str] = None
     config_template: Optional[str] = None
+    wg_interface: Optional[str] = None
+    wg_network_cidr: Optional[str] = None
+    wg_dns: Optional[str] = None
+    wg_allowed_ips: Optional[str] = None
+    wg_persistent_keepalive: Optional[int] = Field(default=None, ge=0)
+    wg_public_key: Optional[str] = None
     ssh_private_key_content: Optional[str] = None
     remark: Optional[str] = None
     is_active: Optional[bool] = None
@@ -115,6 +138,16 @@ class OpenVpnServerUpdate(BaseModel):
             return value
         raise ValueError("协议只能是 udp 或 tcp")
 
+    @field_validator("vpn_type")
+    @classmethod
+    def validate_vpn_type(cls, value):
+        if value is None:
+            return value
+        value = value.lower()
+        if value in VPN_TYPES:
+            return value
+        raise ValueError("VPN类型只能是 openvpn 或 wireguard")
+
     @field_validator("status")
     @classmethod
     def validate_status(cls, value):
@@ -127,7 +160,7 @@ class OpenVpnServerUpdate(BaseModel):
     def validate_certificate_backend(cls, value):
         if value is None or value in CERTIFICATE_BACKENDS:
             return value
-        raise ValueError("证书后端只能是 metadata、local_easyrsa 或 ssh_easyrsa")
+        raise ValueError("证书后端只能是 metadata、local_easyrsa、ssh_easyrsa 或 wireguard")
 
 
 class OpenVpnServerRead(OpenVpnServerBase, OpenVpnServerSecretMixin):
@@ -212,6 +245,7 @@ class OpenVpnAccountRead(BaseModel):
     username: Optional[str] = None
     nickname: Optional[str] = None
     server_name: Optional[str] = None
+    server_vpn_type: Optional[str] = None
     certificate_id: Optional[int] = None
     certificate_status: Optional[str] = None
     certificate_serial_number: Optional[str] = None
