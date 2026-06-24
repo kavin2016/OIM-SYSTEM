@@ -84,6 +84,7 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         data = self._apply_server_defaults(payload.model_dump())
         data = self._persist_server_ssh_private_key(data)
         server = OpenVpnServer(**data, created_by=actor_id, updated_by=actor_id)
+        self._initialize_server_remote_config(server)
         if server.is_default:
             self._clear_default_server()
         return self.commit(server, "OpenVPN服务器名称或编码已存在")
@@ -91,10 +92,13 @@ class OpenVpnService(BaseService[OpenVpnServer]):
     def update_server(self, server_id: int, payload: OpenVpnServerUpdate, actor_id: int) -> OpenVpnServer:
         server = self.get_server_required(server_id, include_deleted=True)
         update_data = payload.model_dump(exclude_unset=True)
+        should_initialize_remote = self._should_initialize_remote_config(update_data)
         update_data = self._persist_server_ssh_private_key(update_data, server)
         for field_name, value in update_data.items():
             setattr(server, field_name, value)
         self._apply_server_defaults_to_instance(server)
+        if should_initialize_remote:
+            self._initialize_server_remote_config(server)
         if server.is_default:
             self._clear_default_server(except_id=server.id)
         if server.is_deleted:
@@ -1028,6 +1032,56 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         data["ssh_key_path"] = str(key_path)
         return data
 
+    def _should_initialize_remote_config(self, update_data: dict) -> bool:
+        remote_fields = {
+            "vpn_type",
+            "host",
+            "port",
+            "certificate_backend",
+            "ssh_host",
+            "ssh_port",
+            "ssh_user",
+            "ssh_key_path",
+            "ssh_private_key_content",
+            "easy_rsa_dir",
+            "pki_dir",
+            "ca_cert_path",
+            "tls_crypt_key_path",
+            "wg_interface",
+            "wg_network_cidr",
+            "wg_dns",
+            "wg_allowed_ips",
+            "wg_public_key",
+        }
+        return bool(remote_fields.intersection(update_data.keys()))
+
+    def _initialize_server_remote_config(self, server: OpenVpnServer) -> None:
+        if not self._server_uses_ssh(server):
+            return
+        self._ensure_server_ssh_key_available(server)
+        if server.vpn_type == "wireguard":
+            server.wg_public_key = self._wireguard_server_public_key(server)
+            return
+        if server.certificate_backend == "ssh_easyrsa":
+            self._run_remote_shell(server, self._remote_test_command(server))
+
+    @staticmethod
+    def _server_uses_ssh(server: OpenVpnServer) -> bool:
+        return server.vpn_type == "wireguard" or server.certificate_backend == "ssh_easyrsa"
+
+    def _ensure_server_ssh_key_available(self, server: OpenVpnServer) -> None:
+        key_path_value = self._effective_ssh_key_path(server)
+        if not key_path_value:
+            raise ConflictError("服务器需要SSH连接，请填写SSH私钥内容后保存")
+        key_path = Path(key_path_value).expanduser()
+        if not key_path.exists():
+            raise ConflictError(
+                f"SSH私钥文件不存在：{key_path}。请在添加/编辑VPN服务器时填写SSH私钥内容，"
+                f"系统会自动写入 /data/oim/ssh/{server.code}.key 并设置权限"
+            )
+        if not key_path.is_file():
+            raise ConflictError(f"SSH私钥路径不是文件：{key_path}")
+
     def _apply_server_defaults_to_instance(self, server: OpenVpnServer) -> None:
         data = self._apply_server_defaults(
             {
@@ -1898,8 +1952,9 @@ class OpenVpnService(BaseService[OpenVpnServer]):
             key_path = Path(key_path_value).expanduser()
             if not key_path.exists():
                 raise ConflictError(
-                    f"SSH私钥文件不存在：{key_path}。请确认该路径是后端生产环境内可访问的路径；"
-                    "如果服务器记录里仍是开发机路径，请在服务器管理中修改或清空SSH私钥路径"
+                    f"SSH私钥文件不存在：{key_path}。这是后端容器内路径，生产宿主机通常对应 "
+                    f"./data/oim/ssh/{server.code}.key；也可以在VPN服务器管理中编辑该服务器，填写SSH私钥内容后保存，"
+                    "系统会自动写入该路径"
                 )
             if not key_path.is_file():
                 raise ConflictError(f"SSH私钥路径不是文件：{key_path}")

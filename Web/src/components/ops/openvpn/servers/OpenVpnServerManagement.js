@@ -38,6 +38,9 @@ export default {
       () => servers.value.length > 0 && selectedRows.value.length === servers.value.length,
     )
     const isWireGuardMode = computed(() => serverForm.vpn_type === 'wireguard')
+    const isRemoteSshMode = computed(
+      () => serverForm.vpn_type === 'wireguard' || serverForm.certificate_backend === 'ssh_easyrsa',
+    )
     const expectedSshKeyPath = computed(() => {
       if (serverForm.ssh_key_path) return serverForm.ssh_key_path
       if (!serverForm.code) return '/data/oim/ssh/<服务器编码>.key'
@@ -185,6 +188,10 @@ export default {
 
     async function saveServer() {
       applySmartServerDefaults()
+      if (!editingServerId.value && isRemoteSshMode.value && !serverForm.ssh_private_key_content?.trim()) {
+        ElMessage.warning('请填写SSH私钥内容，系统会自动写入后端容器路径并完成连接检测')
+        return
+      }
       const payload = {
         ...serverForm,
         port: Number(serverForm.port) || 1194,
@@ -308,6 +315,7 @@ export default {
       expectedSshKeyPath,
       isAllRowsSelected,
       isWireGuardMode,
+      isRemoteSshMode,
       loadServers,
       loading,
       openCreateServer,

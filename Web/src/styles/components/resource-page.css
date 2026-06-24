@@ -491,6 +491,66 @@
   padding: 8px;
 }
 
+.field-label-with-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+}
+
+.field-help {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #64748b;
+  color: #ffffff;
+  cursor: help;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.field-help-popover {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 8px);
+  z-index: 3200;
+  display: none;
+  width: min(420px, 72vw);
+  max-width: calc(100vw - 80px);
+  padding: 12px 14px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.18);
+  color: #334155;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.field-help-popover strong,
+.field-help-popover span {
+  display: block;
+}
+
+.field-help-popover strong {
+  margin-bottom: 6px;
+  color: #0f172a;
+}
+
+.field-help:hover .field-help-popover,
+.field-help:focus .field-help-popover,
+.field-help:focus-within .field-help-popover {
+  display: block;
+}
+
 .role-form-panel {
   width: min(760px, 100%);
 }

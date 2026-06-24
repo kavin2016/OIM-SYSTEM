@@ -125,7 +125,32 @@
           <label><span>协议</span><select v-model="serverForm.protocol" :disabled="isWireGuardMode"><option value="udp">udp</option><option value="tcp">tcp</option></select></label>
           <label><span>最大连接</span><input v-model.number="serverForm.max_clients" type="number" min="0" placeholder="0 表示不限" /></label>
           <label><span>SSH用户</span><input v-model="serverForm.ssh_user" type="text" placeholder="root" /></label>
-          <label class="layer-form-full"><span>SSH私钥内容</span><textarea v-model="serverForm.ssh_private_key_content" rows="5" placeholder="可选；填写后自动保存为服务器编码对应的私钥文件"></textarea></label>
+          <label class="layer-form-full">
+            <span class="field-label-with-help">
+              <span>SSH私钥内容</span>
+              <span
+                class="field-help"
+                tabindex="0"
+                aria-label="如何获取SSH私钥"
+              >
+                ?
+                <span class="field-help-popover">
+                  <strong>如何获取 SSH 私钥</strong>
+                  <span>填写能登录 VPN 服务器的私钥文件内容。</span>
+                  <span>已有密钥：cat ~/.ssh/你的私钥文件。</span>
+                  <span>没有密钥：ssh-keygen -t ed25519 -f ~/.ssh/WG-252.key。</span>
+                  <span>把 .pub 公钥加入 VPN 服务器的 ~/.ssh/authorized_keys。</span>
+                  <span>复制范围必须包含 BEGIN 和 END PRIVATE KEY。</span>
+                </span>
+              </span>
+            </span>
+            <textarea
+              v-model="serverForm.ssh_private_key_content"
+              rows="5"
+              :required="!editingServerId && isRemoteSshMode"
+              placeholder="新增远程VPN服务器时必填；保存后系统自动写入后端容器路径并检测连接"
+            ></textarea>
+          </label>
           <label class="layer-form-full readonly-form-row"><span>默认私钥路径</span><input :value="expectedSshKeyPath" type="text" readonly /></label>
           <template v-if="isWireGuardMode">
             <label><span>WG接口</span><input v-model="serverForm.wg_interface" type="text" placeholder="wg0" /></label>
