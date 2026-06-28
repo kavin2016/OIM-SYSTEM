@@ -8,6 +8,8 @@
       <div><h3>操作日志</h3></div>
     </div>
     <div class="op-log-query-form" @keydown.enter.prevent="searchLogs">
+      <label><span>操作人ID</span><input v-model="filters.operator_id" type="number" min="1" /></label>
+      <label><span>部门ID</span><input v-model="filters.department_id" type="number" min="1" /></label>
       <label><span>操作人</span><input v-model.trim="filters.operator_username" type="text" placeholder="账号" /></label>
       <label><span>部门</span><input v-model.trim="filters.department_name" type="text" placeholder="部门名称" /></label>
       <label>

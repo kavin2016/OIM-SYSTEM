@@ -32,6 +32,7 @@ export function createFormActions(ctx, deps) {
     return {
       ...result,
       department_ids: payload.department_ids || [],
+      data_scope_department_ids: payload.data_scope_department_ids || [],
       role_ids: payload.role_ids || [],
       position_ids: payload.position_ids || [],
     }
@@ -126,14 +127,16 @@ export function createFormActions(ctx, deps) {
     if (resourceKey === 'users') {
       relationLoading.value = true
       try {
-        const [userDepartments, userRoles, userPositions] = await Promise.all([
+        const [userDepartments, userRoles, userPositions, userDataScopeDepartments] = await Promise.all([
           api.admin.listUserDepartments(token.value, row.id),
           api.admin.listUserRoles(token.value, row.id),
           api.admin.listUserPositions(token.value, row.id),
+          api.admin.listUserDataScopeDepartments(token.value, row.id),
         ])
         form.department_id = userDepartments[0]?.id || null
         form.role_id = userRoles[0]?.id || null
         form.position_ids = userPositions.map((position) => position.id)
+        form.data_scope_department_id = userDataScopeDepartments[0]?.id || null
       } catch (err) {
         message.value = err.message || '加载用户部门或角色失败'
       } finally {

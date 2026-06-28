@@ -11,6 +11,7 @@ from ..models.openvpn import OpenVpnAccount, OpenVpnConnectionLog, OpenVpnSessio
 from ..models.position import Position
 from ..models.role import Role
 from ..models.user import User
+from ..models.user_data_scope_department import UserDataScopeDepartment
 from ..models.user_department import UserDepartment
 from ..models.user_position import UserPosition
 from ..models.user_role import UserRole
@@ -62,8 +63,13 @@ class UserService(BaseService[User]):
         role_id: Optional[int] = None,
         created_at_start: Optional[datetime] = None,
         created_at_end: Optional[datetime] = None,
+        scope_user_ids: Optional[list[int]] = None,
     ) -> list[User]:
+        if scope_user_ids == []:
+            return []
         query = self.db.query(User)
+        if scope_user_ids is not None:
+            query = query.filter(User.id.in_(scope_user_ids))
         if not include_deleted:
             query = query.filter(User.is_deleted.is_(False))
         if is_active is not None:
@@ -126,6 +132,7 @@ class UserService(BaseService[User]):
         user.is_active = user_create.is_active
         self.commit(user, "用户名或邮箱已存在")
         self.replace_departments(user.id, user_create.department_ids)
+        self.replace_data_scope_departments(user.id, user_create.data_scope_department_ids)
         self.replace_roles(user.id, user_create.role_ids)
         self.replace_positions(user.id, user_create.position_ids)
         self.db.refresh(user)
@@ -184,6 +191,8 @@ class UserService(BaseService[User]):
         self.commit(user, "用户名或邮箱已存在")
         if "department_ids" in user_update.model_fields_set:
             self.replace_departments(user.id, user_update.department_ids)
+        if "data_scope_department_ids" in user_update.model_fields_set:
+            self.replace_data_scope_departments(user.id, user_update.data_scope_department_ids)
         if "role_ids" in user_update.model_fields_set:
             self.replace_roles(user.id, user_update.role_ids)
         if "position_ids" in user_update.model_fields_set:
@@ -264,7 +273,7 @@ class UserService(BaseService[User]):
 
     def replace_departments(self, user_id: int, department_ids: Optional[list[int]]) -> None:
         self.db.query(UserDepartment).filter(UserDepartment.user_id == user_id).delete()
-        valid_ids = self.get_valid_department_ids(department_ids)
+        valid_ids = self.get_valid_department_ids(department_ids)[:1]
         for index, department_id in enumerate(valid_ids):
             self.db.add(
                 UserDepartment(
@@ -275,9 +284,15 @@ class UserService(BaseService[User]):
             )
         self.db.commit()
 
+    def replace_data_scope_departments(self, user_id: int, department_ids: Optional[list[int]]) -> None:
+        self.db.query(UserDataScopeDepartment).filter(UserDataScopeDepartment.user_id == user_id).delete()
+        for department_id in self.get_valid_department_ids(department_ids)[:1]:
+            self.db.add(UserDataScopeDepartment(user_id=user_id, department_id=department_id))
+        self.db.commit()
+
     def replace_roles(self, user_id: int, role_ids: Optional[list[int]]) -> None:
         self.db.query(UserRole).filter(UserRole.user_id == user_id).delete()
-        for role_id in self.get_valid_role_ids(role_ids):
+        for role_id in self.get_valid_role_ids(role_ids)[:1]:
             self.db.add(UserRole(user_id=user_id, role_id=role_id))
         self.db.commit()
 
@@ -287,11 +302,19 @@ class UserService(BaseService[User]):
             self.db.add(UserPosition(user_id=user_id, position_id=position_id))
         self.db.commit()
 
-    def assign_roles(self, user_id: int, role_ids: Optional[list[int]], actor_id: int) -> User:
+    def assign_roles(
+        self,
+        user_id: int,
+        role_ids: Optional[list[int]],
+        actor_id: int,
+        data_scope_department_ids: Optional[list[int]] = None,
+    ) -> User:
         user = self.get_required(user_id)
         if user.username == self.protected_username:
             raise ConflictError("admin 用户不能分配角色")
         self.replace_roles(user.id, role_ids)
+        if data_scope_department_ids is not None:
+            self.replace_data_scope_departments(user.id, data_scope_department_ids)
         user.updated_by = actor_id
         return self.commit(user, "分配角色失败")
 
@@ -362,6 +385,20 @@ class UserService(BaseService[User]):
                 Department.is_deleted.is_(False),
             )
             .order_by(UserDepartment.is_primary.desc(), Department.id.asc())
+            .all()
+        )
+
+    def list_data_scope_departments(self, user_id: int) -> list[Department]:
+        self.get_required(user_id)
+        return (
+            self.db.query(Department)
+            .join(UserDataScopeDepartment, UserDataScopeDepartment.department_id == Department.id)
+            .filter(
+                UserDataScopeDepartment.user_id == user_id,
+                Department.is_active.is_(True),
+                Department.is_deleted.is_(False),
+            )
+            .order_by(Department.id.asc())
             .all()
         )
 

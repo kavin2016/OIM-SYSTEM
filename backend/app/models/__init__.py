@@ -30,6 +30,7 @@ from .position import Position
 from .role import Role
 from .role_permission import RolePermission
 from .user import User
+from .user_data_scope_department import UserDataScopeDepartment
 from .user_department import UserDepartment
 from .user_position import UserPosition
 from .user_role import UserRole
@@ -63,6 +64,7 @@ __all__ = [
     "Role",
     "RolePermission",
     "User",
+    "UserDataScopeDepartment",
     "UserDepartment",
     "UserPosition",
     "UserRole",

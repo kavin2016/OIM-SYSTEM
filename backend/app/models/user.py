@@ -28,5 +28,6 @@ class User(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False, comment="修改时间")
 
     departments = relationship("UserDepartment", back_populates="user", cascade="all, delete-orphan")
+    data_scope_departments = relationship("UserDataScopeDepartment", back_populates="user", cascade="all, delete-orphan")
     roles = relationship("UserRole", back_populates="user", cascade="all, delete-orphan")
     positions = relationship("UserPosition", back_populates="user", cascade="all, delete-orphan")

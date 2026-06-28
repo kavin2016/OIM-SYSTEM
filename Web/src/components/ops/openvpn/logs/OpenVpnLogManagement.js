@@ -13,6 +13,7 @@ import {
   openVpnPageStart,
   openVpnPaginationTotal,
   resetOpenVpnPagination,
+  resetOpenVpnReactive,
   sliceOpenVpnPageRows,
 } from '../shared/openVpnConfig.js'
 
@@ -21,6 +22,7 @@ export default {
     const loading = ref(false)
     const servers = ref([])
     const logs = ref([])
+    const logQuery = reactive({ user_id: '', department_id: '', server_id: '', action: '', result: '' })
     const pagination = reactive(emptyOpenVpnPagination())
     const pageCursors = reactive({ 1: null })
     const can = (permission) => hasPermission(permission)
@@ -39,6 +41,7 @@ export default {
       try {
         const cursorId = pageCursors[pagination.page] || null
         const rows = await openvpnAPI.listLogs(token.value, {
+          ...logQuery,
           limit: pagination.pageSize + 1,
           cursor_id: cursorId,
         })
@@ -62,6 +65,16 @@ export default {
       loadLogs()
     }
 
+    function searchLogs() {
+      resetLogPagination()
+      loadLogs()
+    }
+
+    function resetQuery() {
+      resetOpenVpnReactive(logQuery, { user_id: '', department_id: '', server_id: '', action: '', result: '' })
+      searchLogs()
+    }
+
     function changePage(page) {
       if (page > 1 && !(page in pageCursors)) return
       pagination.page = page
@@ -69,7 +82,7 @@ export default {
     }
 
     async function exportLogs() {
-      const result = await openvpnAPI.exportLogs(token.value)
+      const result = await openvpnAPI.exportLogs(token.value, logQuery)
       downloadOpenVpnTextFile(result.filename, result.content, 'text/csv;charset=utf-8')
     }
 
@@ -84,6 +97,7 @@ export default {
       changePageSize,
       exportLogs,
       formatDate,
+      logQuery,
       loading,
       logs,
       openVpnPageEnd,
@@ -91,6 +105,8 @@ export default {
       openVpnPageStart,
       openVpnPaginationTotal,
       pagination,
+      resetQuery,
+      searchLogs,
       serverName,
     }
   },

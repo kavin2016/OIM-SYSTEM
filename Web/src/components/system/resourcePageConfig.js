@@ -20,6 +20,7 @@ export const RESOURCE_CONFIG = {
       is_admin: false,
       is_active: true,
       department_id: null,
+      data_scope_department_id: null,
       role_id: null,
     }),
     toPayload(form, editing) {
@@ -39,6 +40,7 @@ export const RESOURCE_CONFIG = {
         payload.password = form.password
       }
       payload.department_ids = normalizeIdList(form.department_id ? [form.department_id] : [])
+      payload.data_scope_department_ids = normalizeIdList(form.data_scope_department_id ? [form.data_scope_department_id] : [])
       payload.role_ids = normalizeIdList(form.role_id ? [form.role_id] : [])
       payload.position_ids = normalizeIdList(form.position_ids)
       return payload
@@ -58,6 +60,7 @@ export const RESOURCE_CONFIG = {
         is_admin: row.is_admin === true,
         is_active: row.is_active === true,
         department_id: null,
+        data_scope_department_id: null,
         role_id: null,
       })
     },

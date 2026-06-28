@@ -59,7 +59,8 @@ export function createResourcePage(resourceKey) {
         visible: false,
         userId: null,
         username: '',
-        roleIds: [],
+        roleId: null,
+        dataScopeDepartmentId: null,
       })
       const relationPanel = reactive({
         visible: false,

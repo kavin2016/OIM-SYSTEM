@@ -117,8 +117,18 @@ const routes = [
     meta: { requiresAuth: true },
   },
   {
+    path: '/ops/vpn',
+    redirect: '/ops/vpn/servers',
+    meta: { requiresAuth: true },
+  },
+  {
     path: '/ops/openvpn',
-    redirect: '/ops/openvpn/servers',
+    redirect: '/ops/vpn/servers',
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/ops/openvpn/:module(servers|accounts|sessions|logs|rules|traffic)',
+    redirect: (to) => `/ops/vpn/${to.params.module}`,
     meta: { requiresAuth: true },
   },
   {

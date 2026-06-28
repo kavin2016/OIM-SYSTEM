@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Request
 from ..dependencies import LoginLogServiceDep, OperationLogServiceDep
 from ..schemas.login_log import LoginLogDetail, LoginLogExport, LoginLogOptions, LoginLogRead
 from ..security import require_permission
+from ..services.data_scope import ensure_user_in_scope, scoped_user_ids
 
 router = APIRouter(prefix="/login-logs", tags=["login-logs"])
 
@@ -36,6 +37,7 @@ def list_login_logs(
     keyword: Optional[str] = None,
     current_user=Depends(require_permission("ops:login-log:query")),
 ):
+    scope_ids = scoped_user_ids(login_log_service.db, current_user, user_id=user_id, department_id=department_id)
     return login_log_service.list(
         skip=skip,
         limit=limit,
@@ -50,6 +52,7 @@ def list_login_logs(
         created_at_start=created_at_start,
         created_at_end=created_at_end,
         keyword=keyword,
+        scope_user_ids=scope_ids,
     )
 
 
@@ -70,6 +73,7 @@ def export_login_logs(
     keyword: Optional[str] = None,
     current_user=Depends(require_permission("ops:login-log:export")),
 ):
+    scope_ids = scoped_user_ids(login_log_service.db, current_user, user_id=user_id, department_id=department_id)
     filename, content = login_log_service.export_csv(
         user_id=user_id,
         username=username,
@@ -81,6 +85,7 @@ def export_login_logs(
         created_at_start=created_at_start,
         created_at_end=created_at_end,
         keyword=keyword,
+        scope_user_ids=scope_ids,
     )
     operation_log_service.record(
         actor=current_user,
@@ -101,4 +106,6 @@ def get_login_log(
     login_log_service: LoginLogServiceDep,
     current_user=Depends(require_permission("ops:login-log:detail")),
 ):
-    return login_log_service.get_required(log_id)
+    item = login_log_service.get_required(log_id)
+    ensure_user_in_scope(login_log_service.db, current_user, item.user_id, detail="无权查看该登录日志")
+    return item

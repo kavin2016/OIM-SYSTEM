@@ -66,17 +66,24 @@ export const adminAPI = {
   listUserDepartments(token, userId) {
     return authRequest(`/users/${userId}/departments`, { token })
   },
+  listUserDataScopeDepartments(token, userId) {
+    return authRequest(`/users/${userId}/data-scope-departments`, { token })
+  },
   listUserRoles(token, userId) {
     return authRequest(`/users/${userId}/roles`, { token })
   },
   listUserPositions(token, userId) {
     return authRequest(`/users/${userId}/positions`, { token })
   },
-  assignUserRoles(token, userId, roleIds) {
+  assignUserRoles(token, userId, roleIds, dataScopeDepartmentIds = undefined) {
+    const body = { role_ids: roleIds }
+    if (dataScopeDepartmentIds !== undefined) {
+      body.data_scope_department_ids = dataScopeDepartmentIds
+    }
     return authRequest(`/users/${userId}/roles`, {
       method: 'PUT',
       token,
-      body: { role_ids: roleIds },
+      body,
     })
   },
   resetUserPassword(token, userId, password) {

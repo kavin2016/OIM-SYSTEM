@@ -229,8 +229,13 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         status: Optional[str] = None,
         server_id: Optional[int] = None,
         department_id: Optional[int] = None,
+        scope_user_ids: Optional[list[int]] = None,
     ) -> list[OpenVpnAccount]:
+        if scope_user_ids == []:
+            return []
         query = self.db.query(OpenVpnAccount).join(User, User.id == OpenVpnAccount.user_id)
+        if scope_user_ids is not None:
+            query = query.filter(OpenVpnAccount.user_id.in_(scope_user_ids))
         if username:
             keyword = f"%{username.strip()}%"
             query = query.filter(or_(User.username.like(keyword), User.nickname.like(keyword)))
@@ -443,8 +448,15 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         account_id: Optional[int] = None,
         server_id: Optional[int] = None,
         status: Optional[str] = None,
+        scope_user_ids: Optional[list[int]] = None,
     ) -> list[OpenVpnCertificate]:
+        if scope_user_ids == []:
+            return []
         query = self.db.query(OpenVpnCertificate)
+        if scope_user_ids is not None:
+            query = query.join(OpenVpnAccount, OpenVpnAccount.id == OpenVpnCertificate.account_id).filter(
+                OpenVpnAccount.user_id.in_(scope_user_ids)
+            )
         if account_id:
             query = query.filter(OpenVpnCertificate.account_id == account_id)
         if server_id:
@@ -499,8 +511,13 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         server_id: Optional[int] = None,
         user_id: Optional[int] = None,
         status: Optional[str] = None,
+        scope_user_ids: Optional[list[int]] = None,
     ) -> list[OpenVpnSession]:
+        if scope_user_ids == []:
+            return []
         query = self.db.query(OpenVpnSession)
+        if scope_user_ids is not None:
+            query = query.filter(OpenVpnSession.user_id.in_(scope_user_ids))
         if server_id:
             query = query.filter(OpenVpnSession.server_id == server_id)
         if user_id:
@@ -656,34 +673,41 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         server_id: Optional[int] = None,
         user_id: Optional[int] = None,
         action: Optional[str] = None,
+        result: Optional[str] = None,
         cursor_id: Optional[int] = None,
+        scope_user_ids: Optional[list[int]] = None,
     ) -> list[OpenVpnConnectionLog]:
+        if scope_user_ids == []:
+            return []
         query = self.db.query(OpenVpnConnectionLog)
+        if scope_user_ids is not None:
+            query = query.filter(OpenVpnConnectionLog.user_id.in_(scope_user_ids))
         if server_id:
             query = query.filter(OpenVpnConnectionLog.server_id == server_id)
         if user_id:
             query = query.filter(OpenVpnConnectionLog.user_id == user_id)
         if action:
             query = query.filter(OpenVpnConnectionLog.action == action)
+        if result:
+            query = query.filter(OpenVpnConnectionLog.result == result)
         if cursor_id:
             query = query.filter(OpenVpnConnectionLog.id < cursor_id)
             skip = 0
         return query.order_by(OpenVpnConnectionLog.id.desc()).offset(skip).limit(limit).all()
 
-    def list_options(self) -> dict:
-        users = (
-            self.db.query(User)
-            .filter(
-                User.is_deleted.is_(False),
-                User.is_active.is_(True),
-                ~User.id.in_(
-                    self.db.query(OpenVpnAccount.user_id).filter(OpenVpnAccount.status != "revoked")
-                ),
-            )
-            .order_by(User.id.desc())
-            .limit(1000)
-            .all()
+    def list_options(self, scope_user_ids: Optional[list[int]] = None) -> dict:
+        user_query = self.db.query(User).filter(
+            User.is_deleted.is_(False),
+            User.is_active.is_(True),
+            ~User.id.in_(
+                self.db.query(OpenVpnAccount.user_id).filter(OpenVpnAccount.status != "revoked")
+            ),
         )
+        if scope_user_ids == []:
+            user_query = user_query.filter(User.id == -1)
+        elif scope_user_ids is not None:
+            user_query = user_query.filter(User.id.in_(scope_user_ids))
+        users = user_query.order_by(User.id.desc()).limit(1000).all()
         departments = (
             self.db.query(Department)
             .filter(Department.is_deleted.is_(False))
@@ -729,8 +753,18 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         server_id: Optional[int] = None,
         user_id: Optional[int] = None,
         action: Optional[str] = None,
+        result: Optional[str] = None,
+        scope_user_ids: Optional[list[int]] = None,
     ) -> tuple[str, str]:
-        rows = self.list_logs(skip=0, limit=10000, server_id=server_id, user_id=user_id, action=action)
+        rows = self.list_logs(
+            skip=0,
+            limit=10000,
+            server_id=server_id,
+            user_id=user_id,
+            action=action,
+            result=result,
+            scope_user_ids=scope_user_ids,
+        )
         lines = ["ID,用户ID,服务器ID,动作,结果,VPN IP,公网IP,发生时间,详情"]
         for row in rows:
             values = [
@@ -752,21 +786,29 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         period_type: str = "day",
         date_from: Optional[date] = None,
         date_to: Optional[date] = None,
+        scope_department_ids: Optional[list[int]] = None,
     ) -> dict:
-        query = self._traffic_aggregate_query(period_type, "server", date_from, date_to)
+        query = self._traffic_aggregate_query(period_type, "server", date_from, date_to, scope_department_ids)
         totals = query.with_entities(
             func.coalesce(func.sum(OpenVpnTrafficAggregate.bytes_in), 0),
             func.coalesce(func.sum(OpenVpnTrafficAggregate.bytes_out), 0),
             func.coalesce(func.sum(OpenVpnTrafficAggregate.bytes_total), 0),
             func.coalesce(func.sum(OpenVpnTrafficAggregate.session_count), 0),
         ).first()
+        alert_query = self._apply_traffic_alert_department_scope(
+            self.db.query(OpenVpnTrafficAlert).filter(OpenVpnTrafficAlert.status == "open"),
+            scope_department_ids,
+        )
         return {
             "bytes_in": int(totals[0] or 0),
             "bytes_out": int(totals[1] or 0),
             "bytes_total": int(totals[2] or 0),
             "session_count": int(totals[3] or 0),
-            "open_alert_count": self.db.query(OpenVpnTrafficAlert).filter(OpenVpnTrafficAlert.status == "open").count(),
-            "active_rule_count": self.db.query(OpenVpnTrafficThresholdRule).filter(OpenVpnTrafficThresholdRule.is_active.is_(True)).count(),
+            "open_alert_count": alert_query.count(),
+            "active_rule_count": self._apply_traffic_threshold_rule_department_scope(
+                self.db.query(OpenVpnTrafficThresholdRule).filter(OpenVpnTrafficThresholdRule.is_active.is_(True)),
+                scope_department_ids,
+            ).count(),
         }
 
     def traffic_distribution(
@@ -775,10 +817,11 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         period_type: str = "day",
         date_from: Optional[date] = None,
         date_to: Optional[date] = None,
+        scope_department_ids: Optional[list[int]] = None,
     ) -> list[dict]:
         self._validate_traffic_dimension(dimension)
         rows = (
-            self._traffic_aggregate_query(period_type, dimension, date_from, date_to)
+            self._traffic_aggregate_query(period_type, dimension, date_from, date_to, scope_department_ids)
             .with_entities(
                 OpenVpnTrafficAggregate.dimension_id,
                 func.coalesce(func.sum(OpenVpnTrafficAggregate.bytes_in), 0),
@@ -800,8 +843,9 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         date_from: Optional[date] = None,
         date_to: Optional[date] = None,
         limit: int = 10,
+        scope_department_ids: Optional[list[int]] = None,
     ) -> list[dict]:
-        return self.traffic_distribution(dimension, period_type, date_from, date_to)[: max(1, min(limit, 100))]
+        return self.traffic_distribution(dimension, period_type, date_from, date_to, scope_department_ids)[: max(1, min(limit, 100))]
 
     def traffic_trend(
         self,
@@ -810,9 +854,11 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         date_to: Optional[date] = None,
         dimension: Optional[str] = None,
         target_id: Optional[int] = None,
+        scope_department_ids: Optional[list[int]] = None,
     ) -> list[dict]:
         self._validate_traffic_period(period_type)
         query = self.db.query(OpenVpnTrafficAggregate).filter(OpenVpnTrafficAggregate.period_type == period_type)
+        query = self._apply_traffic_department_scope(query, scope_department_ids)
         if dimension:
             self._validate_traffic_dimension(dimension)
             query = query.filter(OpenVpnTrafficAggregate.dimension_type == dimension)
@@ -851,8 +897,12 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         target_type: Optional[str] = None,
         target_id: Optional[int] = None,
         is_active: Optional[bool] = None,
+        scope_department_ids: Optional[list[int]] = None,
     ) -> list[OpenVpnTrafficThresholdRule]:
-        query = self.db.query(OpenVpnTrafficThresholdRule)
+        query = self._apply_traffic_threshold_rule_department_scope(
+            self.db.query(OpenVpnTrafficThresholdRule),
+            scope_department_ids,
+        )
         if target_type:
             query = query.filter(OpenVpnTrafficThresholdRule.target_type == target_type)
         if target_id:
@@ -906,8 +956,10 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         status: Optional[str] = None,
         target_type: Optional[str] = None,
         target_id: Optional[int] = None,
+        scope_department_ids: Optional[list[int]] = None,
     ) -> list[OpenVpnTrafficAlert]:
         query = self.db.query(OpenVpnTrafficAlert)
+        query = self._apply_traffic_alert_department_scope(query, scope_department_ids)
         if status:
             query = query.filter(OpenVpnTrafficAlert.status == status)
         if target_type:
@@ -1350,6 +1402,7 @@ class OpenVpnService(BaseService[OpenVpnServer]):
         dimension: str,
         date_from: Optional[date],
         date_to: Optional[date],
+        scope_department_ids: Optional[list[int]] = None,
     ):
         self._validate_traffic_period(period_type)
         self._validate_traffic_dimension(dimension)
@@ -1357,7 +1410,45 @@ class OpenVpnService(BaseService[OpenVpnServer]):
             OpenVpnTrafficAggregate.period_type == period_type,
             OpenVpnTrafficAggregate.dimension_type == dimension,
         )
+        query = self._apply_traffic_department_scope(query, scope_department_ids)
         return self._apply_traffic_date_range(query, date_from, date_to)
+
+    @staticmethod
+    def _apply_traffic_department_scope(query, scope_department_ids: Optional[list[int]]):
+        if scope_department_ids == []:
+            return query.filter(OpenVpnTrafficAggregate.id == -1)
+        if scope_department_ids is not None:
+            return query.filter(OpenVpnTrafficAggregate.department_id.in_(scope_department_ids))
+        return query
+
+    def _apply_traffic_alert_department_scope(self, query, scope_department_ids: Optional[list[int]]):
+        if scope_department_ids == []:
+            return query.filter(OpenVpnTrafficAlert.id == -1)
+        if scope_department_ids is not None:
+            return (
+                query.join(OpenVpnAccount, OpenVpnAccount.id == OpenVpnTrafficAlert.account_id)
+                .join(UserDepartment, UserDepartment.user_id == OpenVpnAccount.user_id)
+                .filter(UserDepartment.department_id.in_(scope_department_ids))
+            )
+        return query
+
+    def _apply_traffic_threshold_rule_department_scope(self, query, scope_department_ids: Optional[list[int]]):
+        if scope_department_ids == []:
+            return query.filter(OpenVpnTrafficThresholdRule.target_type != "certificate")
+        if scope_department_ids is not None:
+            scoped_certificate_ids = (
+                self.db.query(OpenVpnCertificate.id)
+                .join(OpenVpnAccount, OpenVpnCertificate.account_id == OpenVpnAccount.id)
+                .join(UserDepartment, UserDepartment.user_id == OpenVpnAccount.user_id)
+                .filter(UserDepartment.department_id.in_(scope_department_ids))
+            )
+            return query.filter(
+                or_(
+                    OpenVpnTrafficThresholdRule.target_type != "certificate",
+                    OpenVpnTrafficThresholdRule.target_id.in_(scoped_certificate_ids),
+                )
+            )
+        return query
 
     @staticmethod
     def _apply_traffic_date_range(query, date_from: Optional[date], date_to: Optional[date]):

@@ -116,7 +116,31 @@
       </header>
       <form class="layer-form" @submit.prevent="saveServer">
         <div class="layer-form-grid openvpn-server-form-grid">
-          <label><span>VPN类型</span><select v-model="serverForm.vpn_type"><option value="openvpn">OpenVPN</option><option value="wireguard">WireGuard</option></select></label>
+          <label>
+            <span class="field-label-with-help">
+              <span>VPN类型</span>
+              <span
+                class="field-help field-help-wide"
+                tabindex="0"
+                aria-label="查看服务器端配置说明"
+              >
+                ?
+                <span class="field-help-popover vpn-type-guide-popover">
+                  <strong>{{ currentVpnTypeGuide.title }}</strong>
+                  <span class="guide-summary">{{ currentVpnTypeGuide.summary }}</span>
+                  <span
+                    v-for="section in currentVpnTypeGuide.sections"
+                    :key="section.title"
+                    class="guide-section"
+                  >
+                    <b>{{ section.title }}</b>
+                    <em v-for="line in section.lines" :key="line">{{ line }}</em>
+                  </span>
+                </span>
+              </span>
+            </span>
+            <select v-model="serverForm.vpn_type"><option value="openvpn">OpenVPN</option><option value="wireguard">WireGuard</option></select>
+          </label>
           <label><span>区域</span><input v-model="serverForm.region" type="text" placeholder="PH" /></label>
           <label><span>公网 IP / 域名</span><input v-model="serverForm.host" type="text" required placeholder="8.212.172.191" /></label>
           <label><span>服务器编码</span><input v-model="serverForm.code" type="text" required placeholder="自动生成，可修改" /></label>

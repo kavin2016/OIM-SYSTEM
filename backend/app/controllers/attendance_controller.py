@@ -7,6 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 
 from ..dependencies import AttendanceServiceDep
+from ..models.attendance import (
+    AttendanceRecord,
+    AttendanceRequest,
+    AttendanceScheduleItem,
+)
 from ..schemas.attendance import (
     AttendanceApproval,
     AttendanceDailyResultRead,
@@ -28,6 +33,7 @@ from ..schemas.attendance import (
     AttendanceShiftUpdate,
 )
 from ..security import get_current_active_user, require_permission
+from ..services.data_scope import ensure_departments_in_scope, ensure_user_in_scope, scoped_user_ids
 
 router = APIRouter(prefix="/attendance", tags=["attendance"])
 
@@ -122,7 +128,8 @@ def list_schedules(
     end_date: Optional[date] = None,
     current_user=Depends(require_permission("attendance:schedule:list")),
 ):
-    return attendance_service.list_schedules(skip, limit, user_id, department_id, start_date, end_date)
+    scope_ids = scoped_user_ids(attendance_service.db, current_user, user_id=user_id, department_id=department_id)
+    return attendance_service.list_schedules(skip, limit, user_id, department_id, start_date, end_date, scope_user_ids=scope_ids)
 
 
 @router.post("/schedules", response_model=list[AttendanceScheduleRead], status_code=status.HTTP_201_CREATED)
@@ -131,6 +138,10 @@ def create_schedules(
     attendance_service: AttendanceServiceDep,
     current_user=Depends(require_permission("attendance:schedule:create")),
 ):
+    if payload.department_id:
+        ensure_departments_in_scope(attendance_service.db, current_user, [payload.department_id])
+    for target_user_id in payload.user_ids:
+        ensure_user_in_scope(attendance_service.db, current_user, target_user_id, detail="无权为该用户排班")
     return attendance_service.create_schedules(payload, actor_id=current_user.id)
 
 
@@ -141,6 +152,12 @@ def update_schedule(
     attendance_service: AttendanceServiceDep,
     current_user=Depends(require_permission("attendance:schedule:update")),
 ):
+    item = attendance_service.db.query(AttendanceScheduleItem).filter(AttendanceScheduleItem.id == schedule_id).first()
+    ensure_user_in_scope(attendance_service.db, current_user, item.user_id if item else None, detail="无权修改该排班")
+    if payload.user_id:
+        ensure_user_in_scope(attendance_service.db, current_user, payload.user_id, detail="无权将排班调整给该用户")
+    if payload.department_id:
+        ensure_departments_in_scope(attendance_service.db, current_user, [payload.department_id])
     return attendance_service.update_schedule(schedule_id, payload, actor_id=current_user.id)
 
 
@@ -150,6 +167,8 @@ def delete_schedule(
     attendance_service: AttendanceServiceDep,
     current_user=Depends(require_permission("attendance:schedule:delete")),
 ):
+    item = attendance_service.db.query(AttendanceScheduleItem).filter(AttendanceScheduleItem.id == schedule_id).first()
+    ensure_user_in_scope(attendance_service.db, current_user, item.user_id if item else None, detail="无权删除该排班")
     return attendance_service.delete_schedule(schedule_id)
 
 
@@ -159,12 +178,14 @@ def list_records(
     skip: int = 0,
     limit: int = 200,
     user_id: Optional[int] = None,
+    department_id: Optional[int] = None,
     start_at: Optional[datetime] = None,
     end_at: Optional[datetime] = None,
     record_type: Optional[str] = None,
     current_user=Depends(require_permission("attendance:record:list")),
 ):
-    return attendance_service.list_records(skip, limit, user_id, start_at, end_at, record_type)
+    scope_ids = scoped_user_ids(attendance_service.db, current_user, user_id=user_id, department_id=department_id)
+    return attendance_service.list_records(skip, limit, user_id, start_at, end_at, record_type, scope_user_ids=scope_ids)
 
 
 @router.post("/records", response_model=AttendanceRecordRead, status_code=status.HTTP_201_CREATED)
@@ -173,6 +194,7 @@ def create_record(
     attendance_service: AttendanceServiceDep,
     current_user=Depends(require_permission("attendance:record:create")),
 ):
+    ensure_user_in_scope(attendance_service.db, current_user, payload.user_id, detail="无权为该用户创建打卡记录")
     return attendance_service.create_record(payload, actor_id=current_user.id)
 
 
@@ -183,6 +205,10 @@ def update_record(
     attendance_service: AttendanceServiceDep,
     current_user=Depends(require_permission("attendance:record:update")),
 ):
+    item = attendance_service.db.query(AttendanceRecord).filter(AttendanceRecord.id == record_id).first()
+    ensure_user_in_scope(attendance_service.db, current_user, item.user_id if item else None, detail="无权修改该打卡记录")
+    if payload.user_id:
+        ensure_user_in_scope(attendance_service.db, current_user, payload.user_id, detail="无权将打卡记录调整给该用户")
     return attendance_service.update_record(record_id, payload)
 
 
@@ -192,6 +218,8 @@ def delete_record(
     attendance_service: AttendanceServiceDep,
     current_user=Depends(require_permission("attendance:record:delete")),
 ):
+    item = attendance_service.db.query(AttendanceRecord).filter(AttendanceRecord.id == record_id).first()
+    ensure_user_in_scope(attendance_service.db, current_user, item.user_id if item else None, detail="无权删除该打卡记录")
     return attendance_service.delete_record(record_id)
 
 
@@ -201,11 +229,13 @@ def list_requests(
     skip: int = 0,
     limit: int = 200,
     user_id: Optional[int] = None,
+    department_id: Optional[int] = None,
     request_type: Optional[str] = None,
     request_status: Optional[str] = None,
     current_user=Depends(require_permission("attendance:request:list")),
 ):
-    return attendance_service.list_requests(skip, limit, user_id, request_type, request_status)
+    scope_ids = scoped_user_ids(attendance_service.db, current_user, user_id=user_id, department_id=department_id)
+    return attendance_service.list_requests(skip, limit, user_id, request_type, request_status, scope_user_ids=scope_ids)
 
 
 @router.post("/requests", response_model=AttendanceRequestRead, status_code=status.HTTP_201_CREATED)
@@ -226,6 +256,8 @@ def update_request(
     attendance_service: AttendanceServiceDep,
     current_user=Depends(require_permission("attendance:request:create")),
 ):
+    item = attendance_service.db.query(AttendanceRequest).filter(AttendanceRequest.id == request_id).first()
+    ensure_user_in_scope(attendance_service.db, current_user, item.user_id if item else None, detail="无权修改该考勤申请")
     return attendance_service.update_request(request_id, payload)
 
 
@@ -245,6 +277,8 @@ def approve_request(
     attendance_service: AttendanceServiceDep,
     current_user=Depends(require_permission("attendance:approval:approve")),
 ):
+    item = attendance_service.db.query(AttendanceRequest).filter(AttendanceRequest.id == request_id).first()
+    ensure_user_in_scope(attendance_service.db, current_user, item.user_id if item else None, detail="无权审批该考勤申请")
     return attendance_service.approve_request(request_id, payload, actor_id=current_user.id)
 
 
@@ -254,22 +288,26 @@ def list_daily_results(
     skip: int = 0,
     limit: int = 200,
     user_id: Optional[int] = None,
+    department_id: Optional[int] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     current_user=Depends(require_permission("attendance:daily-report:list")),
 ):
-    return attendance_service.list_daily_results(skip, limit, user_id, start_date, end_date)
+    scope_ids = scoped_user_ids(attendance_service.db, current_user, user_id=user_id, department_id=department_id)
+    return attendance_service.list_daily_results(skip, limit, user_id, start_date, end_date, scope_user_ids=scope_ids)
 
 
 @router.get("/daily-results/export")
 def export_daily_results(
     attendance_service: AttendanceServiceDep,
     user_id: Optional[int] = None,
+    department_id: Optional[int] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     current_user=Depends(require_permission("attendance:report:export")),
 ):
-    rows = attendance_service.list_daily_results(0, 10000, user_id, start_date, end_date)
+    scope_ids = scoped_user_ids(attendance_service.db, current_user, user_id=user_id, department_id=department_id)
+    rows = attendance_service.list_daily_results(0, 10000, user_id, start_date, end_date, scope_user_ids=scope_ids)
     output = StringIO()
     output.write("\ufeff")
     writer = csv.writer(output)
@@ -301,9 +339,11 @@ def rebuild_daily_results(
     work_date: date,
     attendance_service: AttendanceServiceDep,
     user_id: Optional[int] = None,
+    department_id: Optional[int] = None,
     current_user=Depends(require_permission("attendance:daily-report:list")),
 ):
-    return attendance_service.rebuild_daily_results(work_date, user_id)
+    scope_ids = scoped_user_ids(attendance_service.db, current_user, user_id=user_id, department_id=department_id)
+    return attendance_service.rebuild_daily_results(work_date, user_id, scope_user_ids=scope_ids)
 
 
 @router.get("/monthly-summaries", response_model=list[AttendanceMonthlySummaryRead])
@@ -312,22 +352,26 @@ def list_monthly_summaries(
     skip: int = 0,
     limit: int = 200,
     user_id: Optional[int] = None,
+    department_id: Optional[int] = None,
     year: Optional[int] = None,
     month: Optional[int] = None,
     current_user=Depends(require_permission("attendance:monthly-report:list")),
 ):
-    return attendance_service.list_monthly_summaries(skip, limit, user_id, year, month)
+    scope_ids = scoped_user_ids(attendance_service.db, current_user, user_id=user_id, department_id=department_id)
+    return attendance_service.list_monthly_summaries(skip, limit, user_id, year, month, scope_user_ids=scope_ids)
 
 
 @router.get("/monthly-summaries/export")
 def export_monthly_summaries(
     attendance_service: AttendanceServiceDep,
     user_id: Optional[int] = None,
+    department_id: Optional[int] = None,
     year: Optional[int] = None,
     month: Optional[int] = None,
     current_user=Depends(require_permission("attendance:report:export")),
 ):
-    rows = attendance_service.list_monthly_summaries(0, 10000, user_id, year, month)
+    scope_ids = scoped_user_ids(attendance_service.db, current_user, user_id=user_id, department_id=department_id)
+    rows = attendance_service.list_monthly_summaries(0, 10000, user_id, year, month, scope_user_ids=scope_ids)
     output = StringIO()
     output.write("\ufeff")
     writer = csv.writer(output)
@@ -362,6 +406,8 @@ def rebuild_monthly_summaries(
     month: int,
     attendance_service: AttendanceServiceDep,
     user_id: Optional[int] = None,
+    department_id: Optional[int] = None,
     current_user=Depends(require_permission("attendance:monthly-report:list")),
 ):
-    return attendance_service.rebuild_monthly_summaries(year, month, user_id)
+    scope_ids = scoped_user_ids(attendance_service.db, current_user, user_id=user_id, department_id=department_id)
+    return attendance_service.rebuild_monthly_summaries(year, month, user_id, scope_user_ids=scope_ids)

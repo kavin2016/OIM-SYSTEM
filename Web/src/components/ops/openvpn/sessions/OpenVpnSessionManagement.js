@@ -26,7 +26,7 @@ export default {
     const accounts = ref([])
     const sessions = ref([])
     const selectedRowIds = ref([])
-    const sessionQuery = reactive({ server_id: '', user_id: '', status: 'online' })
+    const sessionQuery = reactive({ server_id: '', user_id: '', department_id: '', status: 'online' })
     const pagination = reactive(emptyOpenVpnPagination())
 
     const selectedRows = computed(() => sessions.value.filter((row) => selectedRowIds.value.includes(row.id)))
@@ -96,7 +96,7 @@ export default {
     }
 
     function resetQuery() {
-      resetOpenVpnReactive(sessionQuery, { server_id: '', user_id: '', status: 'online' })
+      resetOpenVpnReactive(sessionQuery, { server_id: '', user_id: '', department_id: '', status: 'online' })
       resetOpenVpnPagination(pagination)
       selectedRowIds.value = []
       loadSessions()

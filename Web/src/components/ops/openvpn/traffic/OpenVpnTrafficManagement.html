@@ -5,9 +5,9 @@
 
   <div class="query-panel">
     <div class="query-header">
-      <div><h3>OpenVPN流量统计</h3></div>
+      <div><h3>VPN流量统计</h3></div>
     </div>
-    <form class="query-body" @submit.prevent="loadTraffic">
+    <form class="query-body" @submit.prevent="refreshAll">
       <div class="query-grid">
         <label>
           <span>统计周期</span>
@@ -24,6 +24,7 @@
             <option value="certificate">按证书</option>
           </select>
         </label>
+        <label><span>部门ID</span><input v-model="trafficQuery.department_id" type="number" min="1" /></label>
         <label>
           <span>开始日期</span>
           <input v-model="trafficQuery.date_from" type="date" />

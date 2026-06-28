@@ -31,6 +31,8 @@ const resultOptions = [
 
 function emptyFilters() {
   return {
+    user_id: '',
+    department_id: '',
     username: '',
     department_name: '',
     login_type: '',

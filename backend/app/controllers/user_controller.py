@@ -17,6 +17,7 @@ from ..schemas.user import (
     UserUpdate,
 )
 from ..security import get_current_active_user, require_permission
+from ..services.data_scope import ensure_departments_in_scope, ensure_user_in_scope, scoped_user_ids
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -67,6 +68,7 @@ def list_users(
     created_at_end: Optional[datetime] = None,
     current_user=Depends(require_permission("system:user:query")),
 ):
+    scope_ids = scoped_user_ids(user_service.db, current_user, department_id=department_id)
     return user_service.list(
         skip=skip,
         limit=limit,
@@ -79,6 +81,7 @@ def list_users(
         role_id=role_id,
         created_at_start=created_at_start,
         created_at_end=created_at_end,
+        scope_user_ids=scope_ids,
     )
 
 
@@ -90,6 +93,8 @@ def create_user(
     operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("system:user:create")),
 ):
+    ensure_departments_in_scope(user_service.db, current_user, user_create.department_ids)
+    ensure_departments_in_scope(user_service.db, current_user, user_create.data_scope_department_ids)
     item = user_service.create_admin_user(user_create, actor_id=current_user.id)
     operation_log_service.record(
         actor=current_user,
@@ -116,6 +121,8 @@ def batch_delete_users(
     operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("system:user:delete")),
 ):
+    for user_id in payload.user_ids:
+        ensure_user_in_scope(user_service.db, current_user, user_id, detail="无权删除该用户")
     items = user_service.delete_users(payload.user_ids, actor_id=current_user.id)
     operation_log_service.record(
         actor=current_user,
@@ -140,6 +147,7 @@ def reset_user_password(
     operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("system:user:reset-password")),
 ):
+    ensure_user_in_scope(user_service.db, current_user, user_id, detail="无权重置该用户密码")
     item = user_service.reset_password(user_id, payload.password, actor_id=current_user.id)
     operation_log_service.record(
         actor=current_user,
@@ -164,6 +172,7 @@ def get_user(
     include_deleted: bool = False,
     current_user=Depends(require_permission("system:user:query")),
 ):
+    ensure_user_in_scope(user_service.db, current_user, user_id)
     return user_service.get_required(user_id, include_deleted=include_deleted)
 
 
@@ -173,7 +182,18 @@ def list_user_departments(
     user_service: UserServiceDep,
     current_user=Depends(require_permission("system:user:query")),
 ):
+    ensure_user_in_scope(user_service.db, current_user, user_id)
     return user_service.list_departments(user_id)
+
+
+@router.get("/{user_id}/data-scope-departments", response_model=list[DepartmentRead])
+def list_user_data_scope_departments(
+    user_id: int,
+    user_service: UserServiceDep,
+    current_user=Depends(require_permission("system:user:assign-role")),
+):
+    ensure_user_in_scope(user_service.db, current_user, user_id, detail="无权查看该用户数据范围")
+    return user_service.list_data_scope_departments(user_id)
 
 
 @router.get("/{user_id}/roles", response_model=list[RoleRead])
@@ -182,6 +202,7 @@ def list_user_roles(
     user_service: UserServiceDep,
     current_user=Depends(require_permission("system:user:assign-role")),
 ):
+    ensure_user_in_scope(user_service.db, current_user, user_id, detail="无权查看该用户角色")
     return user_service.list_roles(user_id)
 
 
@@ -191,6 +212,7 @@ def list_user_positions(
     user_service: UserServiceDep,
     current_user=Depends(require_permission("system:user:query")),
 ):
+    ensure_user_in_scope(user_service.db, current_user, user_id)
     return user_service.list_positions(user_id)
 
 
@@ -203,7 +225,15 @@ def assign_user_roles(
     operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("system:user:assign-role")),
 ):
-    item = user_service.assign_roles(user_id, payload.role_ids, actor_id=current_user.id)
+    ensure_user_in_scope(user_service.db, current_user, user_id, detail="无权分配该用户角色")
+    if payload.data_scope_department_ids is not None:
+        ensure_departments_in_scope(user_service.db, current_user, payload.data_scope_department_ids)
+    item = user_service.assign_roles(
+        user_id,
+        payload.role_ids,
+        actor_id=current_user.id,
+        data_scope_department_ids=payload.data_scope_department_ids,
+    )
     operation_log_service.record(
         actor=current_user,
         module="system",
@@ -215,7 +245,12 @@ def assign_user_roles(
         action_name="分配角色",
         request=request,
         request_body=payload,
-        response_params={"id": item.id, "username": item.username, "role_ids": payload.role_ids},
+        response_params={
+            "id": item.id,
+            "username": item.username,
+            "role_ids": payload.role_ids,
+            "data_scope_department_ids": payload.data_scope_department_ids,
+        },
     )
     return item
 
@@ -229,6 +264,11 @@ def update_user(
     operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("system:user:update")),
 ):
+    ensure_user_in_scope(user_service.db, current_user, user_id, detail="无权修改该用户")
+    if user_update.department_ids is not None:
+        ensure_departments_in_scope(user_service.db, current_user, user_update.department_ids)
+    if user_update.data_scope_department_ids is not None:
+        ensure_departments_in_scope(user_service.db, current_user, user_update.data_scope_department_ids)
     item = user_service.update_admin_user(user_id, user_update, actor_id=current_user.id)
     operation_log_service.record(
         actor=current_user,
@@ -254,6 +294,7 @@ def disable_user(
     operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("system:user:delete")),
 ):
+    ensure_user_in_scope(user_service.db, current_user, user_id, detail="无权删除该用户")
     item = user_service.delete_user(user_id, actor_id=current_user.id)
     operation_log_service.record(
         actor=current_user,

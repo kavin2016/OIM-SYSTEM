@@ -195,7 +195,7 @@
     <div v-if="roleLayer.visible" class="layer-mask">
       <section class="layer-panel layer-panel-small" role="dialog" aria-modal="true" aria-label="分配角色">
         <header class="layer-header">
-          <h3>分配角色</h3>
+          <h3>分配权限</h3>
           <button class="text-button" type="button" @click="closeRoleLayer">
             <span class="button-icon">{{ actionIconMap.close }}</span>
             <span>关闭</span>
@@ -209,17 +209,64 @@
             </label>
             <label>
               <span>用户角色</span>
-              <select v-model="roleLayer.roleIds" multiple>
-                <option v-for="item in roleOptions" :key="item.id" :value="item.id">
-                  {{ item.name }}
-                </option>
-              </select>
+              <el-select
+                v-model="roleLayer.roleId"
+                class="query-control user-form-control user-form-role-select"
+                placeholder="请选择角色"
+                clearable
+                filterable
+                :reserve-keyword="false"
+                no-data-text="暂无角色数据"
+                :fit-input-width="true"
+                :automatic-dropdown="false"
+                :teleported="true"
+                :popper-options="{ modifiers: [{ name: 'offset', options: { offset: [0, 0] } }] }"
+                popper-class="query-select-popper user-form-select-popper user-form-role-popper"
+              >
+                <el-option
+                  v-for="item in roleOptions"
+                  :key="item.id"
+                  :label="item.name"
+                  :value="item.id"
+                  :disabled="item.is_deleted || !item.is_active"
+                >
+                  <div class="user-role-option">
+                    <span class="user-role-option-main">{{ item.name }}</span>
+                    <span class="user-role-option-code">{{ item.code }}</span>
+                    <span class="user-role-option-status" :class="{ off: !item.is_active || item.is_deleted }">
+                      {{ item.is_deleted ? '已删除' : item.is_active ? '正常' : '停用' }}
+                    </span>
+                  </div>
+                </el-option>
+              </el-select>
+            </label>
+            <label>
+              <span>数据范围部门</span>
+              <el-tree-select
+                v-model="roleLayer.dataScopeDepartmentId"
+                class="query-control user-form-control user-form-tree-select"
+                :data="departmentTreeOptions"
+                :props="{ label: 'label', children: 'children' }"
+                node-key="value"
+                placeholder="留空则仅查看本人数据"
+                empty-text="暂无部门数据"
+                clearable
+                filterable
+                :reserve-keyword="false"
+                check-strictly
+                default-expand-all
+                :automatic-dropdown="false"
+                :teleported="true"
+                :popper-options="{ modifiers: [{ name: 'offset', options: { offset: [0, 0] } }] }"
+                :render-after-expand="false"
+                popper-class="query-select-popper user-form-select-popper user-form-tree-popper"
+              />
             </label>
           </div>
           <footer class="layer-footer">
             <button class="secondary-button" type="button" @click="closeRoleLayer" :disabled="saving">取消</button>
             <button class="primary-button" type="submit" :disabled="saving">
-              <span>{{ saving ? '提交中...' : '保存角色' }}</span>
+              <span>{{ saving ? '提交中...' : '保存权限' }}</span>
             </button>
           </footer>
         </form>
@@ -255,6 +302,27 @@
                 clearable
                 filterable
                 :reserve-keyword="false"
+                check-strictly
+                default-expand-all
+                :automatic-dropdown="false"
+                :teleported="true"
+                :popper-options="{ modifiers: [{ name: 'offset', options: { offset: [0, 0] } }] }"
+                popper-class="query-select-popper user-form-select-popper user-form-tree-popper"
+                :render-after-expand="false"
+              />
+            </div>
+            <div class="user-form-row user-form-full">
+              <span class="user-form-label">数据范围部门</span>
+              <el-tree-select
+                v-model="form.data_scope_department_id"
+                class="query-control user-form-control user-form-tree-select"
+                :data="departmentTreeOptions"
+                :props="{ label: 'label', children: 'children' }"
+                node-key="value"
+                placeholder="留空则仅查看本人数据"
+                empty-text="暂无部门数据"
+                clearable
+                filterable
                 check-strictly
                 default-expand-all
                 :automatic-dropdown="false"
@@ -492,7 +560,7 @@
                     :disabled="item.is_deleted || relationLoading || item.username === 'admin'"
                     :title="item.username === 'admin' ? 'admin 用户不能分配角色' : ''"
                   >
-                    <span>分配角色</span>
+                    <span>分配权限</span>
                   </button>
                   <button
                     v-if="canOperate('delete')"

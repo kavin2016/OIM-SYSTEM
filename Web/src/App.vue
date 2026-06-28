@@ -283,7 +283,7 @@ function tabIconFor(tab) {
   if (tab.fullPath.includes('/departments') || tab.title.includes('部门')) return OfficeBuilding
   if (tab.fullPath.includes('/positions') || tab.title.includes('岗位')) return Briefcase
   if (tab.fullPath.includes('/domains') || tab.title.includes('域名')) return Link
-  if (tab.fullPath.includes('/openvpn') || tab.title.includes('OpenVPN')) return Connection
+  if (tab.fullPath.includes('/openvpn') || tab.fullPath.includes('/ops/vpn') || tab.title.includes('VPN')) return Connection
   if (tab.title.includes('代码')) return Setting
   return MenuIcon
 }

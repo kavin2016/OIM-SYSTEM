@@ -43,6 +43,7 @@ export function createAttendancePage(pageKey) {
         year: new Date().getFullYear(),
         month: new Date().getMonth() + 1,
         user_id: '',
+        department_id: '',
       })
       const queryForm = reactive({
         user_id: '',
@@ -280,6 +281,7 @@ export function createAttendancePage(pageKey) {
             const result = await attendanceAPI.rebuildDaily(token.value, {
               work_date: rebuildForm.work_date,
               user_id: rebuildForm.user_id || undefined,
+              department_id: rebuildForm.department_id || undefined,
             })
             upsertRows(result)
           } else if (config.rebuild === 'monthly') {
@@ -287,6 +289,7 @@ export function createAttendancePage(pageKey) {
               year: rebuildForm.year,
               month: rebuildForm.month,
               user_id: rebuildForm.user_id || undefined,
+              department_id: rebuildForm.department_id || undefined,
             })
             upsertRows(result)
           }

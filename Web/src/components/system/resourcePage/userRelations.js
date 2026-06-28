@@ -29,7 +29,8 @@ export function createUserRelationActions(ctx, deps) {
       visible: false,
       userId: null,
       username: '',
-      roleIds: [],
+      roleId: null,
+      dataScopeDepartmentId: null,
     })
   }
 
@@ -71,12 +72,16 @@ export function createUserRelationActions(ctx, deps) {
     message.value = ''
     try {
       await loadFormOptions()
-      const userRoles = await api.admin.listUserRoles(token.value, row.id)
+      const [userRoles, dataScopeDepartments] = await Promise.all([
+        api.admin.listUserRoles(token.value, row.id),
+        api.admin.listUserDataScopeDepartments(token.value, row.id),
+      ])
       Object.assign(roleLayer, {
         visible: true,
         userId: row.id,
         username: row.username || '',
-        roleIds: userRoles.map((role) => role.id),
+        roleId: userRoles[0]?.id || null,
+        dataScopeDepartmentId: dataScopeDepartments[0]?.id || null,
       })
     } catch (err) {
       message.value = err.message || '加载用户角色失败'
@@ -119,7 +124,12 @@ export function createUserRelationActions(ctx, deps) {
     saving.value = true
     message.value = ''
     try {
-      await api.admin.assignUserRoles(token.value, roleLayer.userId, normalizeIdList(roleLayer.roleIds))
+      await api.admin.assignUserRoles(
+        token.value,
+        roleLayer.userId,
+        normalizeIdList(roleLayer.roleId ? [roleLayer.roleId] : []),
+        normalizeIdList(roleLayer.dataScopeDepartmentId ? [roleLayer.dataScopeDepartmentId] : []),
+      )
       closeRoleLayer()
       message.value = '角色已分配'
     } catch (err) {

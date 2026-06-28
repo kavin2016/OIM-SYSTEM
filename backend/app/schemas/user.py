@@ -39,6 +39,7 @@ class UserAdminCreate(UserCreate):
     is_active: bool = True
     is_admin: bool = False
     department_ids: list[int] = Field(default_factory=list)
+    data_scope_department_ids: list[int] = Field(default_factory=list)
     role_ids: list[int] = Field(default_factory=list)
     position_ids: list[int] = Field(default_factory=list)
 
@@ -67,6 +68,7 @@ class UserAdminUpdate(UserUpdate):
     is_admin: Optional[bool] = None
     is_deleted: Optional[bool] = None
     department_ids: Optional[list[int]] = None
+    data_scope_department_ids: Optional[list[int]] = None
     role_ids: Optional[list[int]] = None
     position_ids: Optional[list[int]] = None
 
@@ -81,6 +83,7 @@ class UserResetPassword(BaseModel):
 
 class UserAssignRoles(BaseModel):
     role_ids: list[int] = Field(default_factory=list)
+    data_scope_department_ids: Optional[list[int]] = None
 
 
 class UserRead(UserBase):

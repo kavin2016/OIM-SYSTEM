@@ -121,9 +121,14 @@ class OperationLogService:
         created_at_start: Optional[datetime] = None,
         created_at_end: Optional[datetime] = None,
         keyword: Optional[str] = None,
+        scope_user_ids: Optional[list[int]] = None,
     ) -> list[OperationLog]:
+        if scope_user_ids == []:
+            return []
         query = self.db.query(OperationLog)
         limit = min(max(limit, 1), 500)
+        if scope_user_ids is not None:
+            query = query.filter(OperationLog.operator_id.in_(scope_user_ids))
         if cursor_id:
             query = query.filter(OperationLog.id < cursor_id)
         if operator_id:

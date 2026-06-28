@@ -48,6 +48,8 @@
       <div class="query-body">
         <div class="query-grid">
           <label><span>用户</span><input v-model="accountQuery.username" type="text" /></label>
+          <label><span>用户ID</span><input v-model="accountQuery.user_id" type="number" min="1" /></label>
+          <label><span>部门ID</span><input v-model="accountQuery.department_id" type="number" min="1" /></label>
           <label>
             <span>服务器</span>
             <select v-model="accountQuery.server_id">

@@ -42,6 +42,7 @@ from ..schemas.openvpn import (
     OpenVpnTrafficTrendItem,
 )
 from ..security import require_permission
+from ..services.data_scope import ensure_user_in_scope, scoped_department_ids, scoped_user_ids
 
 router = APIRouter(prefix="/openvpn", tags=["openvpn"])
 
@@ -104,6 +105,14 @@ def _traffic_rule_read(rule: OpenVpnTrafficThresholdRule, service) -> OpenVpnTra
     )
 
 
+def _ensure_traffic_threshold_target_in_scope(service, current_user, target_type: Optional[str], target_id: Optional[int]) -> None:
+    if target_type != "certificate" or not target_id:
+        return
+    certificate = service.get_certificate_required(target_id)
+    account = service.get_account_required(certificate.account_id)
+    ensure_user_in_scope(service.db, current_user, account.user_id, detail="无权管理该用户VPN证书的流量阈值")
+
+
 def _traffic_alert_read(alert: OpenVpnTrafficAlert, service) -> OpenVpnTrafficAlertRead:
     server = service.db.query(OpenVpnServer).filter(OpenVpnServer.id == alert.server_id).first() if alert.server_id else None
     account = service.db.query(OpenVpnAccount).filter(OpenVpnAccount.id == alert.account_id).first() if alert.account_id else None
@@ -136,7 +145,7 @@ def list_openvpn_options(
     openvpn_service: OpenVpnServiceDep,
     current_user=Depends(require_permission("ops:openvpn:account:query")),
 ):
-    return openvpn_service.list_options()
+    return openvpn_service.list_options(scoped_user_ids(openvpn_service.db, current_user))
 
 
 @router.post("/servers", response_model=OpenVpnServerRead, status_code=status.HTTP_201_CREATED)
@@ -374,9 +383,11 @@ def list_accounts(
     status: Optional[str] = None,
     server_id: Optional[int] = None,
     department_id: Optional[int] = None,
+    user_id: Optional[int] = None,
     current_user=Depends(require_permission("ops:openvpn:account:query")),
 ):
-    return [_account_read(item) for item in openvpn_service.list_accounts(skip, limit, username, status, server_id, department_id)]
+    scope_ids = scoped_user_ids(openvpn_service.db, current_user, user_id=user_id, department_id=department_id)
+    return [_account_read(item) for item in openvpn_service.list_accounts(skip, limit, username, status, server_id, department_id, scope_user_ids=scope_ids)]
 
 
 @router.post("/accounts/{user_id}/enable", response_model=OpenVpnAccountRead)
@@ -388,6 +399,7 @@ def enable_account(
     operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:account:enable")),
 ):
+    ensure_user_in_scope(openvpn_service.db, current_user, user_id, detail="无权开通该用户VPN账号")
     item = _account_read(openvpn_service.enable_account(user_id, payload, actor_id=current_user.id))
     operation_log_service.record(
         actor=current_user,
@@ -413,6 +425,7 @@ def disable_account(
     operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:account:disable")),
 ):
+    ensure_user_in_scope(openvpn_service.db, current_user, user_id, detail="无权禁用该用户VPN账号")
     item = _account_read(openvpn_service.disable_account(user_id, actor_id=current_user.id))
     operation_log_service.record(
         actor=current_user,
@@ -438,6 +451,8 @@ def revoke_account(
     operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:account:revoke")),
 ):
+    account = openvpn_service.get_account_required(account_id)
+    ensure_user_in_scope(openvpn_service.db, current_user, account.user_id, detail="无权吊销该用户VPN账号")
     item = _account_read(openvpn_service.revoke_account(account_id, payload.reason, actor_id=current_user.id))
     operation_log_service.record(
         actor=current_user,
@@ -464,6 +479,8 @@ def assign_account_server(
     operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:account:assign-server")),
 ):
+    account = openvpn_service.get_account_required(account_id)
+    ensure_user_in_scope(openvpn_service.db, current_user, account.user_id, detail="无权分配该用户VPN服务器")
     item = _account_read(openvpn_service.assign_account_server(account_id, payload.server_id, actor_id=current_user.id))
     operation_log_service.record(
         actor=current_user,
@@ -488,6 +505,7 @@ def get_resolved_server(
     current_user=Depends(require_permission("ops:openvpn:account:query")),
 ):
     account = openvpn_service.get_account_required(account_id)
+    ensure_user_in_scope(openvpn_service.db, current_user, account.user_id)
     server, source, rule_id = openvpn_service.resolve_user_server(account.user_id)
     return {"server": server, "assign_source": source, "assignment_rule_id": rule_id}
 
@@ -500,8 +518,9 @@ def download_config(
     operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:account:download-config")),
 ):
-    filename, content = openvpn_service.generate_config(account_id, actor_id=current_user.id)
     account = openvpn_service.get_account_required(account_id)
+    ensure_user_in_scope(openvpn_service.db, current_user, account.user_id, detail="无权下载该用户VPN配置")
+    filename, content = openvpn_service.generate_config(account_id, actor_id=current_user.id)
     operation_log_service.record(
         actor=current_user,
         module="ops",
@@ -525,9 +544,12 @@ def list_certificates(
     account_id: Optional[int] = None,
     server_id: Optional[int] = None,
     status: Optional[str] = None,
+    user_id: Optional[int] = None,
+    department_id: Optional[int] = None,
     current_user=Depends(require_permission("ops:openvpn:cert:query")),
 ):
-    return [_certificate_read(item) for item in openvpn_service.list_certificates(skip, limit, account_id, server_id, status)]
+    scope_ids = scoped_user_ids(openvpn_service.db, current_user, user_id=user_id, department_id=department_id)
+    return [_certificate_read(item) for item in openvpn_service.list_certificates(skip, limit, account_id, server_id, status, scope_user_ids=scope_ids)]
 
 
 @router.post("/accounts/{account_id}/certificates/issue", response_model=OpenVpnCertificateRead)
@@ -539,6 +561,8 @@ def issue_certificate(
     operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:cert:issue")),
 ):
+    account = openvpn_service.get_account_required(account_id)
+    ensure_user_in_scope(openvpn_service.db, current_user, account.user_id, detail="无权为该用户签发VPN证书")
     item = _certificate_read(openvpn_service.issue_certificate(account_id, payload.resolved_expires_at(), actor_id=current_user.id))
     operation_log_service.record(
         actor=current_user,
@@ -565,6 +589,9 @@ def revoke_certificate(
     operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:cert:revoke")),
 ):
+    certificate = openvpn_service.get_certificate_required(certificate_id)
+    account = openvpn_service.get_account_required(certificate.account_id)
+    ensure_user_in_scope(openvpn_service.db, current_user, account.user_id, detail="无权吊销该用户VPN证书")
     item = _certificate_read(openvpn_service.revoke_certificate(certificate_id, payload.reason, actor_id=current_user.id))
     operation_log_service.record(
         actor=current_user,
@@ -591,6 +618,9 @@ def renew_certificate(
     operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:cert:renew")),
 ):
+    certificate = openvpn_service.get_certificate_required(certificate_id)
+    account = openvpn_service.get_account_required(certificate.account_id)
+    ensure_user_in_scope(openvpn_service.db, current_user, account.user_id, detail="无权续期该用户VPN证书")
     item = _certificate_read(openvpn_service.renew_certificate(certificate_id, payload.resolved_expires_at(), actor_id=current_user.id))
     operation_log_service.record(
         actor=current_user,
@@ -614,9 +644,11 @@ def get_traffic_overview(
     period_type: str = "day",
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
+    department_id: Optional[int] = None,
     current_user=Depends(require_permission("ops:openvpn:traffic:query")),
 ):
-    return openvpn_service.traffic_overview(period_type, date_from, date_to)
+    scope_department_ids = scoped_department_ids(openvpn_service.db, current_user, department_id=department_id)
+    return openvpn_service.traffic_overview(period_type, date_from, date_to, scope_department_ids)
 
 
 @router.get("/traffic/distribution", response_model=list[OpenVpnTrafficMetric])
@@ -626,9 +658,11 @@ def get_traffic_distribution(
     period_type: str = "day",
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
+    department_id: Optional[int] = None,
     current_user=Depends(require_permission("ops:openvpn:traffic:query")),
 ):
-    return openvpn_service.traffic_distribution(dimension, period_type, date_from, date_to)
+    scope_department_ids = scoped_department_ids(openvpn_service.db, current_user, department_id=department_id)
+    return openvpn_service.traffic_distribution(dimension, period_type, date_from, date_to, scope_department_ids)
 
 
 @router.get("/traffic/trend", response_model=list[OpenVpnTrafficTrendItem])
@@ -639,9 +673,11 @@ def get_traffic_trend(
     date_to: Optional[date] = None,
     dimension: Optional[str] = None,
     target_id: Optional[int] = None,
+    department_id: Optional[int] = None,
     current_user=Depends(require_permission("ops:openvpn:traffic:query")),
 ):
-    return openvpn_service.traffic_trend(period_type, date_from, date_to, dimension, target_id)
+    scope_department_ids = scoped_department_ids(openvpn_service.db, current_user, department_id=department_id)
+    return openvpn_service.traffic_trend(period_type, date_from, date_to, dimension, target_id, scope_department_ids)
 
 
 @router.get("/traffic/ranking", response_model=list[OpenVpnTrafficMetric])
@@ -652,9 +688,11 @@ def get_traffic_ranking(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     limit: int = 10,
+    department_id: Optional[int] = None,
     current_user=Depends(require_permission("ops:openvpn:traffic:query")),
 ):
-    return openvpn_service.traffic_ranking(dimension, period_type, date_from, date_to, limit)
+    scope_department_ids = scoped_department_ids(openvpn_service.db, current_user, department_id=department_id)
+    return openvpn_service.traffic_ranking(dimension, period_type, date_from, date_to, limit, scope_department_ids)
 
 
 @router.get("/traffic/threshold-rules", response_model=list[OpenVpnTrafficThresholdRuleRead])
@@ -665,11 +703,13 @@ def list_traffic_threshold_rules(
     target_type: Optional[str] = None,
     target_id: Optional[int] = None,
     is_active: Optional[bool] = None,
+    department_id: Optional[int] = None,
     current_user=Depends(require_permission("ops:openvpn:traffic:threshold:query")),
 ):
+    scope_department_ids = scoped_department_ids(openvpn_service.db, current_user, department_id=department_id)
     return [
         _traffic_rule_read(item, openvpn_service)
-        for item in openvpn_service.list_traffic_threshold_rules(skip, limit, target_type, target_id, is_active)
+        for item in openvpn_service.list_traffic_threshold_rules(skip, limit, target_type, target_id, is_active, scope_department_ids)
     ]
 
 
@@ -681,6 +721,7 @@ def create_traffic_threshold_rule(
     operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:traffic:threshold:create")),
 ):
+    _ensure_traffic_threshold_target_in_scope(openvpn_service, current_user, payload.target_type, payload.target_id)
     item = _traffic_rule_read(openvpn_service.create_traffic_threshold_rule(payload, current_user.id), openvpn_service)
     operation_log_service.record(
         actor=current_user,
@@ -708,6 +749,15 @@ def update_traffic_threshold_rule(
     operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:traffic:threshold:update")),
 ):
+    rule = openvpn_service.get_traffic_threshold_rule_required(rule_id)
+    _ensure_traffic_threshold_target_in_scope(openvpn_service, current_user, rule.target_type, rule.target_id)
+    update_data = payload.model_dump(exclude_unset=True)
+    _ensure_traffic_threshold_target_in_scope(
+        openvpn_service,
+        current_user,
+        update_data.get("target_type", rule.target_type),
+        update_data.get("target_id", rule.target_id),
+    )
     item = _traffic_rule_read(openvpn_service.update_traffic_threshold_rule(rule_id, payload, current_user.id), openvpn_service)
     operation_log_service.record(
         actor=current_user,
@@ -734,6 +784,7 @@ def delete_traffic_threshold_rule(
     current_user=Depends(require_permission("ops:openvpn:traffic:threshold:delete")),
 ):
     rule = openvpn_service.get_traffic_threshold_rule_required(rule_id)
+    _ensure_traffic_threshold_target_in_scope(openvpn_service, current_user, rule.target_type, rule.target_id)
     payload = _traffic_rule_read(rule, openvpn_service)
     openvpn_service.delete_traffic_threshold_rule(rule_id)
     operation_log_service.record(
@@ -759,9 +810,14 @@ def list_traffic_alerts(
     status: Optional[str] = None,
     target_type: Optional[str] = None,
     target_id: Optional[int] = None,
+    department_id: Optional[int] = None,
     current_user=Depends(require_permission("ops:openvpn:traffic:alert:query")),
 ):
-    return [_traffic_alert_read(item, openvpn_service) for item in openvpn_service.list_traffic_alerts(skip, limit, status, target_type, target_id)]
+    scope_department_ids = scoped_department_ids(openvpn_service.db, current_user, department_id=department_id)
+    return [
+        _traffic_alert_read(item, openvpn_service)
+        for item in openvpn_service.list_traffic_alerts(skip, limit, status, target_type, target_id, scope_department_ids)
+    ]
 
 
 @router.post("/traffic/alerts/{alert_id}/process", response_model=OpenVpnTrafficAlertRead)
@@ -773,6 +829,9 @@ def process_traffic_alert(
     operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:traffic:alert:process")),
 ):
+    alert = openvpn_service.db.query(OpenVpnTrafficAlert).filter(OpenVpnTrafficAlert.id == alert_id).first()
+    account = openvpn_service.get_account_required(alert.account_id) if alert and alert.account_id else None
+    ensure_user_in_scope(openvpn_service.db, current_user, account.user_id if account else None, detail="无权处理该流量告警")
     item = _traffic_alert_read(openvpn_service.process_traffic_alert(alert_id, payload.note, current_user.id), openvpn_service)
     operation_log_service.record(
         actor=current_user,
@@ -815,10 +874,12 @@ def list_sessions(
     limit: int = 100,
     server_id: Optional[int] = None,
     user_id: Optional[int] = None,
+    department_id: Optional[int] = None,
     status: Optional[str] = None,
     current_user=Depends(require_permission("ops:openvpn:session:query")),
 ):
-    return [_session_read(item, openvpn_service) for item in openvpn_service.list_sessions(skip, limit, server_id, user_id, status)]
+    scope_ids = scoped_user_ids(openvpn_service.db, current_user, user_id=user_id, department_id=department_id)
+    return [_session_read(item, openvpn_service) for item in openvpn_service.list_sessions(skip, limit, server_id, user_id, status, scope_user_ids=scope_ids)]
 
 
 @router.post("/sessions/{session_id}/kick", response_model=OpenVpnSessionRead)
@@ -829,6 +890,8 @@ def kick_session(
     operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:openvpn:session:kick")),
 ):
+    session = openvpn_service.db.query(OpenVpnSession).filter(OpenVpnSession.id == session_id).first()
+    ensure_user_in_scope(openvpn_service.db, current_user, session.user_id if session else None, detail="无权操作该用户VPN会话")
     item = _session_read(openvpn_service.kick_session(session_id), openvpn_service)
     operation_log_service.record(
         actor=current_user,
@@ -852,11 +915,17 @@ def list_logs(
     limit: int = 100,
     server_id: Optional[int] = None,
     user_id: Optional[int] = None,
+    department_id: Optional[int] = None,
     action: Optional[str] = None,
+    result: Optional[str] = None,
     cursor_id: Optional[int] = None,
     current_user=Depends(require_permission("ops:openvpn:log:query")),
 ):
-    return [_log_read(item, openvpn_service) for item in openvpn_service.list_logs(skip, limit, server_id, user_id, action, cursor_id)]
+    scope_ids = scoped_user_ids(openvpn_service.db, current_user, user_id=user_id, department_id=department_id)
+    return [
+        _log_read(item, openvpn_service)
+        for item in openvpn_service.list_logs(skip, limit, server_id, user_id, action, result, cursor_id, scope_user_ids=scope_ids)
+    ]
 
 
 @router.get("/logs/export", response_model=OpenVpnConfigRead)
@@ -866,10 +935,13 @@ def export_logs(
     operation_log_service: OperationLogServiceDep,
     server_id: Optional[int] = None,
     user_id: Optional[int] = None,
+    department_id: Optional[int] = None,
     action: Optional[str] = None,
+    result: Optional[str] = None,
     current_user=Depends(require_permission("ops:openvpn:log:export")),
 ):
-    filename, content = openvpn_service.export_logs_csv(server_id=server_id, user_id=user_id, action=action)
+    scope_ids = scoped_user_ids(openvpn_service.db, current_user, user_id=user_id, department_id=department_id)
+    filename, content = openvpn_service.export_logs_csv(server_id=server_id, user_id=user_id, action=action, result=result, scope_user_ids=scope_ids)
     operation_log_service.record(
         actor=current_user,
         module="ops",

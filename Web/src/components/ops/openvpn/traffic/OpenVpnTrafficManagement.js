@@ -67,6 +67,7 @@ export default {
     const trafficQuery = reactive({
       period_type: 'day',
       dimension: 'server',
+      department_id: '',
       date_from: monthStartText(),
       date_to: todayText(),
     })
@@ -132,6 +133,7 @@ export default {
       try {
         const baseParams = {
           period_type: trafficQuery.period_type,
+          department_id: trafficQuery.department_id,
           date_from: trafficQuery.date_from,
           date_to: trafficQuery.date_to,
         }
@@ -153,7 +155,10 @@ export default {
     async function loadRules() {
       ruleLoading.value = true
       try {
-        rules.value = asOpenVpnArray(await openvpnAPI.listTrafficThresholdRules(token.value, { limit: 1000 }))
+        rules.value = asOpenVpnArray(await openvpnAPI.listTrafficThresholdRules(token.value, {
+          limit: 1000,
+          department_id: trafficQuery.department_id,
+        }))
       } finally {
         ruleLoading.value = false
       }
@@ -162,7 +167,10 @@ export default {
     async function loadAlerts() {
       alertLoading.value = true
       try {
-        alerts.value = asOpenVpnArray(await openvpnAPI.listTrafficAlerts(token.value, alertQuery))
+        alerts.value = asOpenVpnArray(await openvpnAPI.listTrafficAlerts(token.value, {
+          ...alertQuery,
+          department_id: trafficQuery.department_id,
+        }))
       } finally {
         alertLoading.value = false
       }
@@ -176,10 +184,11 @@ export default {
       resetOpenVpnReactive(trafficQuery, {
         period_type: 'day',
         dimension: 'server',
+        department_id: '',
         date_from: monthStartText(),
         date_to: todayText(),
       })
-      loadTraffic()
+      refreshAll()
     }
 
     function openCreateRule() {

@@ -9,6 +9,7 @@ from ..database import Base
 class UserDepartment(Base):
     __tablename__ = "sys_user_departments"
     __table_args__ = (
+        UniqueConstraint("user_id", name="uq_user_departments_user"),
         UniqueConstraint("user_id", "department_id", name="uq_user_departments_user_department"),
     )
 

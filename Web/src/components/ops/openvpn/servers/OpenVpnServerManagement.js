@@ -41,6 +41,68 @@ export default {
     const isRemoteSshMode = computed(
       () => serverForm.vpn_type === 'wireguard' || serverForm.certificate_backend === 'ssh_easyrsa',
     )
+    const currentVpnTypeGuide = computed(() => {
+      if (serverForm.vpn_type === 'wireguard') {
+        return {
+          title: 'WireGuard 服务器端配置说明',
+          summary: '适合新服务器快速接入。系统会通过 SSH 初始化 wg0、读取服务器公钥，并在签发凭据时自动追加 Peer。',
+          sections: [
+            {
+              title: '服务器要求',
+              lines: [
+                'Linux 主机需要开放 SSH 登录，推荐使用 root 或具备 sudo 权限的运维账号。',
+                'UDP 51820 需要在云安全组和系统防火墙中放行。',
+                'CentOS 8.2 等内核不支持 WireGuard 模块时，系统可使用 wireguard-go 用户态方式运行。',
+              ],
+            },
+            {
+              title: '系统默认配置',
+              lines: [
+                '接口：wg0；端口：51820/udp；客户端网段：10.66.0.0/24。',
+                '客户端 DNS：1.1.1.1,1.0.0.1；允许访问：0.0.0.0/0,::/0；Keepalive：25。',
+                '服务器私钥保存在 VPN 服务器 /etc/wireguard/server_private.key。',
+              ],
+            },
+            {
+              title: '添加服务器时需要填写',
+              lines: [
+                '公网 IP / 域名、区域、服务器编码、SSH 用户、SSH 私钥内容。',
+                '高级参数可以保持默认，系统会在保存服务器时自动检测 WireGuard 配置。',
+              ],
+            },
+          ],
+        }
+      }
+      return {
+        title: 'OpenVPN 服务器端配置说明',
+        summary: '适合已有 OpenVPN + Easy-RSA 的服务器接入。系统通过 SSH 调用 Easy-RSA 签发、吊销证书，并生成客户端 ovpn 文件。',
+        sections: [
+          {
+            title: '服务器要求',
+            lines: [
+              'Linux 主机需要开放 SSH 登录，推荐使用 root 或具备 sudo 权限的运维账号。',
+              'UDP 1194 需要在云安全组和系统防火墙中放行。',
+              '服务器上需要存在可用的 Easy-RSA、PKI、CA 证书、CRL 和 tls-crypt/tls-auth 密钥。',
+            ],
+          },
+          {
+            title: '系统默认路径',
+            lines: [
+              'Easy-RSA目录：/etc/openvpn/easy-rsa；PKI目录：/etc/openvpn/easy-rsa/pki。',
+              'CA证书：/etc/openvpn/easy-rsa/pki/ca.crt；CRL：/etc/openvpn/easy-rsa/pki/crl.pem。',
+              'TLS密钥：优先使用服务器记录配置，未填写时按系统默认路径处理。',
+            ],
+          },
+          {
+            title: '添加服务器时需要填写',
+            lines: [
+              '公网 IP / 域名、区域、服务器编码、SSH 用户、SSH 私钥内容。',
+              '如服务器使用标准路径，高级配置可以不填写；非标准安装时再展开高级配置维护路径。',
+            ],
+          },
+        ],
+      }
+    })
     const expectedSshKeyPath = computed(() => {
       if (serverForm.ssh_key_path) return serverForm.ssh_key_path
       if (!serverForm.code) return '/data/oim/ssh/<服务器编码>.key'
@@ -313,6 +375,7 @@ export default {
       editingServerId,
       editSelectedServer,
       expectedSshKeyPath,
+      currentVpnTypeGuide,
       isAllRowsSelected,
       isWireGuardMode,
       isRemoteSshMode,

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Request
 from ..dependencies import OperationLogServiceDep
 from ..schemas.operation_log import OperationLogDetail, OperationLogExport, OperationLogOptions, OperationLogRead
 from ..security import require_permission
+from ..services.data_scope import ensure_user_in_scope, scoped_user_ids
 
 router = APIRouter(prefix="/operation-logs", tags=["operation-logs"])
 
@@ -39,6 +40,7 @@ def list_operation_logs(
     keyword: Optional[str] = None,
     current_user=Depends(require_permission("ops:operation-log:query")),
 ):
+    scope_ids = scoped_user_ids(operation_log_service.db, current_user, user_id=operator_id, department_id=department_id)
     return operation_log_service.list(
         skip=skip,
         limit=limit,
@@ -56,6 +58,7 @@ def list_operation_logs(
         created_at_start=created_at_start,
         created_at_end=created_at_end,
         keyword=keyword,
+        scope_user_ids=scope_ids,
     )
 
 
@@ -78,6 +81,7 @@ def export_operation_logs(
     keyword: Optional[str] = None,
     current_user=Depends(require_permission("ops:operation-log:export")),
 ):
+    scope_ids = scoped_user_ids(operation_log_service.db, current_user, user_id=operator_id, department_id=department_id)
     filename, content = operation_log_service.export_csv(
         operator_id=operator_id,
         operator_username=operator_username,
@@ -92,6 +96,7 @@ def export_operation_logs(
         created_at_start=created_at_start,
         created_at_end=created_at_end,
         keyword=keyword,
+        scope_user_ids=scope_ids,
     )
     operation_log_service.record(
         actor=current_user,
@@ -112,4 +117,6 @@ def get_operation_log(
     operation_log_service: OperationLogServiceDep,
     current_user=Depends(require_permission("ops:operation-log:detail")),
 ):
-    return operation_log_service.get_required(log_id)
+    item = operation_log_service.get_required(log_id)
+    ensure_user_in_scope(operation_log_service.db, current_user, item.operator_id, detail="无权查看该操作日志")
+    return item

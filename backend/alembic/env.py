@@ -34,6 +34,7 @@ from app.models import (  # noqa: F401
     Role,
     RolePermission,
     User,
+    UserDataScopeDepartment,
     UserDepartment,
     UserPosition,
     UserRole,

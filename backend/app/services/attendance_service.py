@@ -155,8 +155,13 @@ class AttendanceService(BaseService[AttendanceShift]):
         department_id: Optional[int] = None,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
+        scope_user_ids: Optional[list[int]] = None,
     ):
+        if scope_user_ids == []:
+            return []
         query = self.db.query(AttendanceScheduleItem)
+        if scope_user_ids is not None:
+            query = query.filter(AttendanceScheduleItem.user_id.in_(scope_user_ids))
         if user_id:
             query = query.filter(AttendanceScheduleItem.user_id == user_id)
         if department_id:
@@ -222,8 +227,13 @@ class AttendanceService(BaseService[AttendanceShift]):
         start_at: Optional[datetime] = None,
         end_at: Optional[datetime] = None,
         record_type: Optional[str] = None,
+        scope_user_ids: Optional[list[int]] = None,
     ):
+        if scope_user_ids == []:
+            return []
         query = self.db.query(AttendanceRecord)
+        if scope_user_ids is not None:
+            query = query.filter(AttendanceRecord.user_id.in_(scope_user_ids))
         if user_id:
             query = query.filter(AttendanceRecord.user_id == user_id)
         if start_at:
@@ -259,8 +269,13 @@ class AttendanceService(BaseService[AttendanceShift]):
         user_id: Optional[int] = None,
         request_type: Optional[str] = None,
         status: Optional[str] = None,
+        scope_user_ids: Optional[list[int]] = None,
     ):
+        if scope_user_ids == []:
+            return []
         query = self.db.query(AttendanceRequest)
+        if scope_user_ids is not None:
+            query = query.filter(AttendanceRequest.user_id.in_(scope_user_ids))
         if user_id:
             query = query.filter(AttendanceRequest.user_id == user_id)
         if request_type:
@@ -310,8 +325,8 @@ class AttendanceService(BaseService[AttendanceShift]):
             self._apply_approved_request(request, actor_id)
         return request
 
-    def rebuild_daily_results(self, work_date: date, user_id: Optional[int] = None):
-        schedules = self.list_schedules(user_id=user_id, start_date=work_date, end_date=work_date, limit=10000)
+    def rebuild_daily_results(self, work_date: date, user_id: Optional[int] = None, scope_user_ids: Optional[list[int]] = None):
+        schedules = self.list_schedules(user_id=user_id, start_date=work_date, end_date=work_date, limit=10000, scope_user_ids=scope_user_ids)
         results = []
         for schedule in schedules:
             result = self._build_daily_result(schedule)
@@ -321,13 +336,17 @@ class AttendanceService(BaseService[AttendanceShift]):
             self.db.refresh(result)
         return results
 
-    def rebuild_monthly_summaries(self, year: int, month: int, user_id: Optional[int] = None):
+    def rebuild_monthly_summaries(self, year: int, month: int, user_id: Optional[int] = None, scope_user_ids: Optional[list[int]] = None):
         start_day = date(year, month, 1)
         end_day = date(year, month, monthrange(year, month)[1])
         query = self.db.query(AttendanceDailyResult).filter(
             AttendanceDailyResult.work_date >= start_day,
             AttendanceDailyResult.work_date <= end_day,
         )
+        if scope_user_ids == []:
+            return []
+        if scope_user_ids is not None:
+            query = query.filter(AttendanceDailyResult.user_id.in_(scope_user_ids))
         if user_id:
             query = query.filter(AttendanceDailyResult.user_id == user_id)
         user_ids = [row[0] for row in query.with_entities(AttendanceDailyResult.user_id).distinct().all()]
@@ -341,8 +360,12 @@ class AttendanceService(BaseService[AttendanceShift]):
             self.db.refresh(summary)
         return summaries
 
-    def list_daily_results(self, skip: int = 0, limit: int = 200, user_id: Optional[int] = None, start_date: Optional[date] = None, end_date: Optional[date] = None):
+    def list_daily_results(self, skip: int = 0, limit: int = 200, user_id: Optional[int] = None, start_date: Optional[date] = None, end_date: Optional[date] = None, scope_user_ids: Optional[list[int]] = None):
+        if scope_user_ids == []:
+            return []
         query = self.db.query(AttendanceDailyResult)
+        if scope_user_ids is not None:
+            query = query.filter(AttendanceDailyResult.user_id.in_(scope_user_ids))
         if user_id:
             query = query.filter(AttendanceDailyResult.user_id == user_id)
         if start_date:
@@ -351,8 +374,12 @@ class AttendanceService(BaseService[AttendanceShift]):
             query = query.filter(AttendanceDailyResult.work_date <= end_date)
         return query.order_by(AttendanceDailyResult.work_date.desc(), AttendanceDailyResult.id.desc()).offset(skip).limit(limit).all()
 
-    def list_monthly_summaries(self, skip: int = 0, limit: int = 200, user_id: Optional[int] = None, year: Optional[int] = None, month: Optional[int] = None):
+    def list_monthly_summaries(self, skip: int = 0, limit: int = 200, user_id: Optional[int] = None, year: Optional[int] = None, month: Optional[int] = None, scope_user_ids: Optional[list[int]] = None):
+        if scope_user_ids == []:
+            return []
         query = self.db.query(AttendanceMonthlySummary)
+        if scope_user_ids is not None:
+            query = query.filter(AttendanceMonthlySummary.user_id.in_(scope_user_ids))
         if user_id:
             query = query.filter(AttendanceMonthlySummary.user_id == user_id)
         if year:

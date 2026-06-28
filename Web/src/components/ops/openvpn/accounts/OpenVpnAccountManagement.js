@@ -32,7 +32,7 @@ export default {
     const users = ref([])
     const departments = ref([])
     const selectedRowIds = ref([])
-    const accountQuery = reactive({ username: '', status: '', server_id: '' })
+    const accountQuery = reactive({ username: '', user_id: '', department_id: '', status: '', server_id: '' })
     const pagination = reactive(emptyOpenVpnPagination())
     const enableLayer = reactive({ visible: false, user_id: '', server_id: '', vpn_username: '', remark: '' })
     const enableUserKeyword = ref('')
@@ -85,7 +85,7 @@ export default {
     }
 
     function resetQuery() {
-      resetOpenVpnReactive(accountQuery, { username: '', status: '', server_id: '' })
+      resetOpenVpnReactive(accountQuery, { username: '', user_id: '', department_id: '', status: '', server_id: '' })
       resetOpenVpnPagination(pagination)
       selectedRowIds.value = []
       loadAccounts()

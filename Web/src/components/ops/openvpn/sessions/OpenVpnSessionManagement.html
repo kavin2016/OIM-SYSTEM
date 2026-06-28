@@ -5,7 +5,7 @@
 
   <div class="query-panel">
     <div class="query-header">
-      <div><h3>OpenVPN在线会话</h3></div>
+      <div><h3>VPN在线会话</h3></div>
     </div>
   </div>
 
@@ -37,6 +37,7 @@
               <option v-for="account in accounts" :key="account.id" :value="account.user_id">{{ accountLabel(account) }}</option>
             </select>
           </label>
+          <label><span>部门ID</span><input v-model="sessionQuery.department_id" type="number" min="1" /></label>
           <label>
             <span>状态</span>
             <select v-model="sessionQuery.status">

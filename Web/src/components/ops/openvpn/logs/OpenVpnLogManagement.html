@@ -5,8 +5,33 @@
 
   <div class="query-panel">
     <div class="query-header">
-      <div><h3>OpenVPN连接日志</h3></div>
+      <div><h3>VPN连接日志</h3></div>
     </div>
+    <form class="query-body" @submit.prevent="searchLogs">
+      <div class="query-grid">
+        <label><span>用户ID</span><input v-model="logQuery.user_id" type="number" min="1" /></label>
+        <label><span>部门ID</span><input v-model="logQuery.department_id" type="number" min="1" /></label>
+        <label>
+          <span>服务器</span>
+          <select v-model="logQuery.server_id">
+            <option value="">全部</option>
+            <option v-for="server in servers" :key="server.id" :value="server.id">{{ server.name }}</option>
+          </select>
+        </label>
+        <label><span>动作</span><input v-model.trim="logQuery.action" type="text" /></label>
+        <label><span>结果</span><input v-model.trim="logQuery.result" type="text" /></label>
+      </div>
+      <div class="query-actions">
+        <button type="submit" class="primary-button" :disabled="loading">
+          <span class="button-icon">{{ actionIconMap.query }}</span>
+          <span>{{ loading ? '查询中...' : '查询' }}</span>
+        </button>
+        <button type="button" class="secondary-button" :disabled="loading" @click="resetQuery">
+          <span>↻</span>
+          <span>重置</span>
+        </button>
+      </div>
+    </form>
   </div>
 
   <section class="resource-list">

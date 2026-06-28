@@ -57,14 +57,14 @@ const resourceTypeFallbackOptions = [
   { value: 'position', label: '岗位' },
   { value: 'domain', label: '域名' },
   { value: 'operation_log', label: '操作日志' },
-  { value: 'openvpn_server', label: 'OpenVPN服务器' },
-  { value: 'openvpn_account', label: 'OpenVPN账号' },
-  { value: 'openvpn_certificate', label: 'OpenVPN证书' },
-  { value: 'openvpn_session', label: 'OpenVPN会话' },
-  { value: 'openvpn_log', label: 'OpenVPN连接日志' },
-  { value: 'openvpn_rule', label: 'OpenVPN分配策略' },
-  { value: 'openvpn_traffic_threshold', label: 'OpenVPN流量阈值' },
-  { value: 'openvpn_traffic_alert', label: 'OpenVPN流量告警' },
+  { value: 'openvpn_server', label: 'VPN服务器' },
+  { value: 'openvpn_account', label: 'VPN账号' },
+  { value: 'openvpn_certificate', label: 'VPN凭据' },
+  { value: 'openvpn_session', label: 'VPN会话' },
+  { value: 'openvpn_log', label: 'VPN连接日志' },
+  { value: 'openvpn_rule', label: 'VPN分配策略' },
+  { value: 'openvpn_traffic_threshold', label: 'VPN流量阈值' },
+  { value: 'openvpn_traffic_alert', label: 'VPN流量告警' },
 ]
 
 const resultOptions = [
@@ -75,6 +75,8 @@ const resultOptions = [
 
 function emptyFilters() {
   return {
+    operator_id: '',
+    department_id: '',
     operator_username: '',
     department_name: '',
     module: '',

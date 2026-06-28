@@ -40,9 +40,14 @@ class LoginLogService:
         created_at_start: Optional[datetime] = None,
         created_at_end: Optional[datetime] = None,
         keyword: Optional[str] = None,
+        scope_user_ids: Optional[list[int]] = None,
     ) -> list[LoginLog]:
+        if scope_user_ids == []:
+            return []
         query = self.db.query(LoginLog)
         limit = min(max(limit, 1), 500)
+        if scope_user_ids is not None:
+            query = query.filter(LoginLog.user_id.in_(scope_user_ids))
         if cursor_id:
             query = query.filter(LoginLog.id < cursor_id)
         if user_id:

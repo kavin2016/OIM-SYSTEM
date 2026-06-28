@@ -7,7 +7,22 @@ export const openVpnTabs = [
   { key: 'traffic', label: '流量统计', permission: 'ops:openvpn:traffic:query' },
 ]
 
+export const openVpnTabPaths = {
+  servers: '/ops/vpn/servers',
+  accounts: '/ops/vpn/accounts',
+  sessions: '/ops/vpn/sessions',
+  logs: '/ops/vpn/logs',
+  rules: '/ops/vpn/rules',
+  traffic: '/ops/vpn/traffic',
+}
+
 export const openVpnRouteTabMap = {
+  '/ops/vpn/servers': 'servers',
+  '/ops/vpn/accounts': 'accounts',
+  '/ops/vpn/sessions': 'sessions',
+  '/ops/vpn/logs': 'logs',
+  '/ops/vpn/rules': 'rules',
+  '/ops/vpn/traffic': 'traffic',
   '/ops/openvpn/servers': 'servers',
   '/ops/openvpn/accounts': 'accounts',
   '/ops/openvpn/sessions': 'sessions',

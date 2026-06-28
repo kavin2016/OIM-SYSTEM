@@ -183,6 +183,7 @@ export const ATTENDANCE_CONFIG = {
     deletePermission: 'attendance:record:delete',
     queryFields: [
       ['user_id', '用户ID', 'number'],
+      ['department_id', '部门ID', 'number'],
       ['start_at', '开始时间', 'datetime-local'],
       ['end_at', '结束时间', 'datetime-local'],
       ['record_type', '记录类型', 'text'],
@@ -219,6 +220,7 @@ export const ATTENDANCE_CONFIG = {
     updatePermission: 'attendance:request:create',
     queryFields: [
       ['user_id', '用户ID', 'number'],
+      ['department_id', '部门ID', 'number'],
       ['request_type', '申请类型', 'text'],
       ['request_status', '申请状态', 'select', [
         ['', '全部'],
@@ -260,6 +262,7 @@ export const ATTENDANCE_CONFIG = {
     defaultQuery: { request_status: 'pending' },
     queryFields: [
       ['user_id', '用户ID', 'number'],
+      ['department_id', '部门ID', 'number'],
       ['request_type', '申请类型', 'text'],
     ],
     columns: [
@@ -282,6 +285,7 @@ export const ATTENDANCE_CONFIG = {
     rebuild: 'daily',
     queryFields: [
       ['user_id', '用户ID', 'number'],
+      ['department_id', '部门ID', 'number'],
       ['start_date', '开始日期', 'date'],
       ['end_date', '结束日期', 'date'],
     ],
@@ -308,6 +312,7 @@ export const ATTENDANCE_CONFIG = {
     rebuild: 'monthly',
     queryFields: [
       ['user_id', '用户ID', 'number'],
+      ['department_id', '部门ID', 'number'],
       ['year', '年份', 'number'],
       ['month', '月份', 'number'],
     ],
