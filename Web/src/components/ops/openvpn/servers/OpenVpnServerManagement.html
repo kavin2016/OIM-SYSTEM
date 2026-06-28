@@ -86,7 +86,7 @@
             <td class="action-cell">
               <button v-if="can('ops:openvpn:server:update')" type="button" class="secondary-button" @click="openEditServer(item)">编辑</button>
               <button v-if="can('ops:openvpn:server:set-default')" type="button" class="secondary-button" :disabled="item.is_default" @click="setDefaultServer(item)">设默认</button>
-              <button v-if="can('ops:openvpn:server:delete')" type="button" class="danger-button" @click="deleteServer(item)">删除</button>
+              <button v-if="can('ops:openvpn:server:delete')" type="button" class="danger-button" :disabled="item.is_deleted" @click.stop.prevent="deleteInlineServer(item)">删除</button>
             </td>
           </tr>
         </tbody>

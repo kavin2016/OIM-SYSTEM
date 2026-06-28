@@ -28,7 +28,7 @@ export default {
     const editingServerId = ref(null)
     const lastAutoServerCode = ref('')
     const lastAutoServerName = ref('')
-    const serverQuery = reactive({ name: '', code: '', status: '', region: '', include_disabled: true })
+    const serverQuery = reactive({ name: '', code: '', status: '', region: '', include_disabled: true, include_deleted: false })
     const pagination = reactive(emptyOpenVpnPagination())
     const serverForm = reactive(emptyOpenVpnServerForm())
 
@@ -129,7 +129,7 @@ export default {
     }
 
     function resetQuery() {
-      resetOpenVpnReactive(serverQuery, { name: '', code: '', status: '', region: '', include_disabled: true })
+      resetOpenVpnReactive(serverQuery, { name: '', code: '', status: '', region: '', include_disabled: true, include_deleted: false })
       resetOpenVpnPagination(pagination)
       selectedRowIds.value = []
       loadServers()
@@ -173,6 +173,15 @@ export default {
         return []
       }
       return selectedRows.value
+    }
+
+    function isMessageBoxCancelled(error) {
+      return error === 'cancel' || error === 'close' || error?.action === 'cancel' || error?.action === 'close'
+    }
+
+    function removeServersFromCurrentPage(serverIds) {
+      servers.value = servers.value.filter((row) => !serverIds.includes(row.id))
+      selectedRowIds.value = selectedRowIds.value.filter((id) => !serverIds.includes(id))
     }
 
     function openCreateServer() {
@@ -299,20 +308,56 @@ export default {
     }
 
     async function deleteServer(row) {
-      await ElMessageBox.confirm(`确认删除服务器 ${row.name}？`, '删除确认', { type: 'warning' })
-      await openvpnAPI.deleteServer(token.value, row.id)
-      ElMessage.success('服务器已删除')
-      await loadServers()
+      if (row.is_deleted) {
+        ElMessage.warning('该服务器已删除')
+        return
+      }
+      try {
+        await ElMessageBox.confirm(`确认删除服务器 ${row.name}？`, '删除确认', {
+          type: 'warning',
+          confirmButtonText: '确认删除',
+          cancelButtonText: '取消',
+        })
+      } catch (error) {
+        if (!isMessageBoxCancelled(error)) throw error
+        return
+      }
+      try {
+        await openvpnAPI.deleteServer(token.value, row.id)
+        removeServersFromCurrentPage([row.id])
+        ElMessage.success('服务器已删除')
+        await loadServers()
+      } catch (error) {
+        ElMessage.error(error?.message || '服务器删除失败')
+      }
+    }
+
+    async function deleteInlineServer(row) {
+      await deleteServer(row)
     }
 
     async function deleteSelectedServers() {
-      const rows = requireAnySelection('删除')
+      const rows = requireAnySelection('删除').filter((row) => !row.is_deleted)
       if (rows.length === 0) return
-      await ElMessageBox.confirm(`确认删除选中的 ${rows.length} 台服务器？`, '删除确认', { type: 'warning' })
-      await Promise.all(rows.map((row) => openvpnAPI.deleteServer(token.value, row.id)))
-      selectedRowIds.value = []
-      ElMessage.success('服务器已删除')
-      await loadServers()
+      try {
+        await ElMessageBox.confirm(`确认删除选中的 ${rows.length} 台服务器？`, '删除确认', {
+          type: 'warning',
+          confirmButtonText: '确认删除',
+          cancelButtonText: '取消',
+        })
+      } catch (error) {
+        if (!isMessageBoxCancelled(error)) throw error
+        return
+      }
+      try {
+        const ids = rows.map((row) => row.id)
+        await Promise.all(rows.map((row) => openvpnAPI.deleteServer(token.value, row.id)))
+        removeServersFromCurrentPage(ids)
+        ElMessage.success('服务器已删除')
+        await loadServers()
+      } catch (error) {
+        ElMessage.error(error?.message || '服务器删除失败')
+      }
     }
 
     async function setDefaultServer(row) {
@@ -372,6 +417,7 @@ export default {
       changePageSize,
       deleteSelectedServers,
       deleteServer,
+      deleteInlineServer,
       editingServerId,
       editSelectedServer,
       expectedSshKeyPath,
